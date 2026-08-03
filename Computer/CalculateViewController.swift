@@ -10,6 +10,25 @@ import UIKit
 
 class CalculateViewController: UIViewController, Storyboarded, UITextFieldDelegate {
     weak var coordinator: MainCoordinator?
+    private var didAdjustLayoutForSafeArea = false
+
+    // This scene's fields use the storyboard's legacy fixed-frame (springs & struts) layout,
+    // with Y-coordinates hardcoded against an old 320x568 design - they're relative to the
+    // view's top-left corner, not the safe area below the nav bar. On devices with a taller
+    // nav bar than that old design assumed, the top rows (e.g. First Point's Latitude) end up
+    // hidden underneath it. Shift every subview down by the safe area inset once, after the
+    // first real layout pass has computed it, rather than reworking the whole legacy layout.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        guard !didAdjustLayoutForSafeArea else { return }
+        let topInset = view.safeAreaInsets.top
+        guard topInset > 0 else { return }
+        for subview in view.subviews {
+            subview.frame.origin.y += topInset
+        }
+        didAdjustLayoutForSafeArea = true
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
 

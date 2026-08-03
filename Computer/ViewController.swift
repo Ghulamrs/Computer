@@ -23,9 +23,16 @@ class FirstViewController: UITableViewController, Storyboarded {
     
     override func viewDidLoad() {
         super.viewDidLoad()
-        
+
         // Do any additional setup after loading the view.
         title = "Shalimar"
+        navigationItem.rightBarButtonItem = UIBarButtonItem(
+            barButtonSystemItem: .add, target: self, action: #selector(newProgramTapped))
+    }
+
+    @objc func newProgramTapped() {
+        coordinator?.fileURL = ""
+        coordinator?.compute()
     }
     
     override func viewDidAppear(_ animated: Bool) {

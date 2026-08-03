@@ -1,0 +1,767 @@
+# The Shalimar Language
+
+A developer reference for **Shalimar**, the small numeric scripting language interpreted by
+`Lexer.swift` / `Parser.swift` / `Evaluator.swift` in this project (Xcode project `Computer`,
+target `Computer`). This document is the authoritative specification: when the interpreter and
+this document disagree, that is a conformance bug in the interpreter, not a documentation error —
+fix the code, or deliberately renegotiate and update this file, but don't let them silently drift.
+
+This file both teaches the language to someone writing `.shm` programs, and documents the
+interpreter's actual internals for whoever maintains `Lexer.swift`/`Parser.swift`/`Evaluator.swift`.
+Sections marked **Implementation note** are for the latter audience and describe real, verified
+behavior of the current code — including a couple of sharp edges worth knowing before you rely on
+them.
+
+---
+
+## 1. Overview
+
+- Every program is a set of function definitions; execution begins at `main()`.
+- There is exactly one data type: 64-bit floating point (`Double`). No integers, no booleans, no
+  arrays, no first-class strings (see [§6](#6-the-type-model-everything-is-a-double)).
+- Control flow: `if`/`elseif`/`else`, `while`, `for ... to ... step ...`.
+- Functions can return **multiple** values; the caller captures them with the multi-assign
+  syntax `<a,b> : f(...)`.
+- Output goes through `?` (print with newline) or `!` (print without newline).
+- Statements have no terminator (no `;`, newlines are not significant) — the parser instead uses
+  targeted lookahead to know where one statement ends and the next begins. See
+  [§8](#8-statement-boundaries--why-there-are-no-semicolons).
+
+### 1.1 A complete example
+
+```
+fun <> = main() {
+   a : 1
+   b : 2
+   c : 1
+   d : b^2 - 4*a*c        // discriminant, correct precedence: ^ then * then -
+   if d < 0 {
+      ? "No real roots"
+   } else {
+      d : sqrt(d)
+      x1 : (-b - d) / (2*a)
+      x2 : (-b + d) / (2*a)
+      ? "Solution" x1 x2
+   }
+}
+```
+
+---
+
+## 2. Lexical structure
+
+Source is read left to right; whitespace (including newlines) is skipped and otherwise
+insignificant.
+
+### 2.1 Comments
+
+```
+Comment ::= "//" { Character } (newline | EOF)
+```
+
+`//` may appear at the start of a line or after code on the same line; everything from `//` to the
+end of that line is discarded.
+
+**Implementation note:** there is **no block-comment (`/* ... */`) support in the lexer**, despite
+`ComputeViewController.swift`'s `formatIndentation`/`braceBalance` helpers containing logic that
+recognizes `/* ... */` for the purpose of re-indenting scanned/pasted source in the editor UI. That
+logic is purely cosmetic (it decides how to indent text you paste into the editor) and is
+independent of the actual language grammar. If you type `/* comment */` in a real program, the
+lexer does **not** treat it as a comment — `/` lexes as `divide`, `*` as `multiply`, and the words
+inside as identifiers, producing a parse error. Don't let the editor's tolerance of `/* */` fool you
+into thinking the language supports it.
+
+### 2.2 Identifiers
+
+```
+Identifier ::= (Letter | "_") { Letter | Digit | "_" }
+Letter     ::= "a".."z" | "A".."Z"
+Digit      ::= "0".."9"
+```
+
+Case-sensitive. Keywords (`if`, `else`, `elseif`, `while`, `for`, `to`, `step`, `fun`, `return`) are
+recognized case-insensitively at the lexer level (`idStr.lowercased()` is switched on) and can never
+be used as identifiers.
+
+**`Letter` and `Digit` are ASCII only — this is deliberate.** The lexer enforces it with
+`c.isASCII && c.isLetter`, not the bare `c.isLetter` you might expect. Swift's `isLetter` is true for
+*every* Unicode letter, and letting those through is actively dangerous here rather than merely
+permissive: Cyrillic `х` (U+0445) and Latin `x` (U+0078) are the same glyph on screen but different
+identifiers, so `хn : y - 4` assigns to a variable that no `xn` in the program will ever read. That
+is not hypothetical — it is exactly how a camera-scanned program failed, surfacing as a baffling
+`Error: Undefined variable 'x'` pointing at a line where `x` was plainly defined. The same trap
+exists for Greek `Α`/`Ο`/`Ρ` and for non-ASCII digits.
+
+A non-ASCII character therefore produces a **lex error** naming its code point (see
+[§10.1](#101-lex-errors-lexerlexerror-shown-as-lex-error-)), which is the only way to make the
+difference visible. It is important that this is an error and not a silent skip: dropping the
+character would quietly turn `хn` into the identifier `n` and simply relocate the bug.
+
+The editor also normalizes confusable characters to ASCII on the way in (`asciiConfusables` /
+`normalizedToASCII` in `ComputeViewController.swift`) for text that is typed, pasted, or scanned, so
+in practice the lexer's check is the backstop rather than the first line of defence — but it is the
+authoritative one, since a `.shm` file loaded from disk bypasses the editor entirely.
+
+### 2.3 Numbers
+
+```
+Number ::= Digit { Digit } [ "." Digit { Digit } ]
+```
+
+All numbers are `Double`. `Digit` is ASCII `0`–`9` only, for the reasons given in
+[§2.2](#22-identifiers) — a non-ASCII digit is a lex error, not a numeral. There is no
+scientific/exponent notation (`1e10` is not supported — `e` is just a letter, so `1e10` lexes as the
+number `1` immediately followed by the identifier `e10`, which will then fail to parse as a valid
+continuation).
+
+**Implementation note — silently dropped malformed numbers:** the lexer builds up a run of
+digits/`.` characters and only appends a token if `Double(numStr)` succeeds. A malformed literal
+like `1.2.3` is accepted by the *scanning* loop (it happily consumes `1`, `.`, `2`, `.`, `3` as one
+run) but `Double("1.2.3")` returns `nil`, so **no token at all is emitted** for it — it vanishes
+from the token stream instead of producing a lex error. This desyncs everything after it and
+surfaces as a confusing downstream parse error pointing at the wrong place. If you're debugging a
+mysterious "unexpected token" error, check for a stray extra `.` in a number first.
+
+### 2.4 String literals
+
+```
+StringLiteral ::= '"' { Character } '"'
+```
+
+No escape sequences are supported. If the closing `"` is missing before end of input, the lexer
+does **not** error — it just includes everything up to EOF as the string's content (intentional,
+tolerant behavior; see the comment on that branch in `Lexer.swift`).
+
+`Character` here is genuinely unconstrained: **the ASCII-only rule of [§2.2](#22-identifiers) applies
+to identifiers and numbers, not to string contents.** `? "héllo wörld ✓"` lexes and prints fine,
+because the string branch consumes raw characters up to the closing quote without consulting the
+identifier predicates. That is the intended split — non-ASCII is a hazard when it is silently
+*naming* something, and harmless when it is just text being printed.
+
+### 2.5 Operators and punctuation
+
+| Token(s) | Meaning |
+|---|---|
+| `+` `-` `*` `/` `%` `^` | arithmetic: add, subtract, multiply, divide, modulus, power |
+| `:` | assignment (`x : expr`) / separator (`for i : 0 to 10`, multi-assign) |
+| `=` | **overloaded**, see below |
+| `!=` | not-equal comparison |
+| `<` `>` | **overloaded**, see below |
+| `&` `\|` | logical and / or (operate on truthiness, see [§6.2](#62-truthiness)) |
+| `+:` `-:` | compound assign (`x +: 1` ⇔ `x : x + 1`) |
+| `(` `)` | grouping / call argument list |
+| `{` `}` | block delimiters |
+| `,` | list separator |
+| `?` | print with trailing newline |
+| `!` | print with no trailing newline (only when *not* immediately followed by `=`) |
+| `"` | string literal delimiter |
+
+**`=` is overloaded three ways**, disambiguated purely by grammatical position:
+1. Inside an expression, it's the **equality comparison** operator (`if d = 0 { ... }`).
+2. At the very start of a statement, `identifier = expr` is accepted as a **fallback assignment
+   operator** — it behaves exactly like `identifier : expr`, but the parser prints
+   `Warning: '=' used for assignment. Use ':' instead.` to stdout (via Swift's `print`, **not**
+   through the `Evaluator.output` callback, so this particular warning never reaches the app's
+   on-screen console — only Xcode's console).
+3. In a function definition header, `fun <outputs> = name(inputs) { ... }` — the separator between
+   the output list and the function name.
+
+**`<` / `>` are overloaded two ways**:
+1. Inside an expression, standard less-than / greater-than comparison.
+2. As angle brackets around a variable list: multi-assign's `<a,b> : f(...)` and a function
+   definition's output list `<out1,out2>`.
+
+The parser disambiguates `<` via lookahead (`looksLikeMultiAssignHeader`): at any point it could
+start a new statement or continue an expression, it peeks ahead for the exact shape
+`Identifier {"," Identifier} ">" ":"` before committing to "this is a multi-assign header, not a
+less-than". `>` itself is never ambiguous — by the time the parser is scanning for it, it's already
+inside a bracket-list context, never general expression parsing.
+
+---
+
+## 3. Grammar (EBNF)
+
+```
+Program       ::= { Statement }
+
+Statement     ::= Assignment
+                | CompoundAssign
+                | MultiAssign
+                | ReturnStmt
+                | FunctionDef
+                | FunctionCall
+                | IfStmt
+                | WhileStmt
+                | ForStmt
+                | PrintStmt
+
+Assignment    ::= Identifier ":" Expression
+                | Identifier "=" Expression   (* fallback, warning *)
+
+CompoundAssign ::= Identifier "+:" Expression
+                 | Identifier "-:" Expression
+
+MultiAssign   ::= "<" Identifier { "," Identifier } ">" ":" FunctionCall
+
+ReturnStmt    ::= "return" { Expression }   (* the parser allows zero expressions too *)
+
+FunctionDef   ::= "fun" OutputList "=" Identifier "(" InputList ")" Block
+OutputList    ::= "<" [ Identifier { "," Identifier } ] ">"
+InputList     ::= [ Identifier { "," Identifier } ]
+
+FunctionCall  ::= Identifier "(" [ Expression { "," Expression } ] ")"
+
+IfStmt        ::= "if" Expression Block
+                  { "elseif" Expression Block }
+                  [ "else" Block ]
+
+WhileStmt     ::= "while" Expression Block
+
+ForStmt       ::= "for" Identifier ":" Expression "to" Expression [ "step" Expression ] Block
+
+Block         ::= "{" { Statement } "}"
+
+PrintStmt     ::= "?" PrintItems
+                | "!" PrintItems
+PrintItems    ::= Expression { Expression }
+
+Expression    ::= OrExpr
+OrExpr        ::= AndExpr { "|" AndExpr }
+AndExpr       ::= CompareExpr { "&" CompareExpr }
+CompareExpr   ::= AddExpr { ("=" | "!=" | "<" | ">") AddExpr }
+AddExpr       ::= MulExpr { ("+" | "-") MulExpr }
+MulExpr       ::= PowExpr { ("*" | "/" | "%") PowExpr }
+PowExpr       ::= Term [ "^" PowExpr ]
+Term          ::= Number | StringLiteral | Identifier | FunctionCall | "-" Term | "(" Expression ")"
+
+Identifier    ::= (Letter | "_") { Letter | Digit | "_" }
+Number        ::= Digit { Digit } [ "." Digit { Digit } ]
+StringLiteral ::= '"' { Character } '"'
+Comment       ::= "//" { Character } (newline | EOF)
+```
+
+---
+
+## 4. Operator precedence
+
+Loosest-binding to tightest-binding:
+
+| Tier | Operators | Associativity |
+|---|---|---|
+| 1 (loosest) | `\|` | left |
+| 2 | `&` | left |
+| 3 | `=` `!=` `<` `>` | left |
+| 4 | `+` `-` | left |
+| 5 | `*` `/` `%` | left |
+| 6 | `^` | **right** |
+| 7 (tightest) | unary `-`, literals, identifiers, calls, `(...)` | — |
+
+`(...)` grouping overrides precedence anywhere, exactly as you'd expect: `(2*a)`, `(-b-d)/(2*a)`,
+etc.
+
+`^` is right-associative: `2^3^2` is `2^(3^2) = 512`, not `(2^3)^2 = 64`.
+
+### 4.1 Unary minus vs. `^` — a real gotcha
+
+Unary minus (`parseTerm`'s `.minus` case) recurses into `parseTerm` for its operand and folds the
+negation in immediately, returning the negated result as a single `Term` — *before* the caller
+(`parsePower`) gets a chance to see a following `^`. The practical effect: **when a negated
+expression is the base (left operand) of `^`, the negation applies before exponentiation** —
+
+```
+-2^2   evaluates as (-2)^2  =  4      (not -4, unlike Python's -2**2 == -4)
+-a^2   evaluates as (-a)^2
+```
+
+On the exponent (right-hand) side it behaves the way you'd expect from ordinary math notation,
+since `parsePower` recurses right-associatively there:
+
+```
+2^-2   evaluates as 2^(-2)  =  0.25
+```
+
+If you want `-(a^2)` specifically, write it with explicit parentheses: `-(a^2)`.
+
+---
+
+## 5. Statements
+
+### 5.1 Assignment
+
+`x : expr` evaluates `expr` and stores the result in `x`. `x = expr` does the same but is a
+"fallback" spelling that emits a console warning (see [§2.5](#25-operators-and-punctuation)) —
+always prefer `:`.
+
+### 5.2 Compound assignment
+
+`x +: expr` ⇔ `x : x + expr`; `x -: expr` ⇔ `x : x - expr`. `x` must already exist (it's read
+before being reassigned) — using `+:`/`-:` on an undefined variable throws
+`Error: Undefined variable 'x'`.
+
+### 5.3 Multi-assign — the way to consume more than one return value
+
+```
+<a, b> : someFunction(args)
+```
+
+Calls `someFunction`, and assigns its returned values positionally to `a`, `b`, ... (extra returned
+values beyond the variable list are silently discarded; extra variables beyond the returned values
+keep their previous value — untouched, not zeroed — since the loop is `for (i, v) in
+vals.enumerated() where i < multiAssign.variables.count`).
+
+This is required whenever you want more than one of a function's return values. For just the
+first (or only) return value, plain assignment works too — see [§7](#7-user-defined-function-results-and-multi-value-returns).
+
+**The one arity check that does exist**: if the number of values actually returned doesn't match
+the number of variables listed, this prints `Warning: '<name>' returned <n>, expected <m>` (via
+`output`, so it reaches the on-screen console) — but the assignment still proceeds exactly as
+described above (truncated/partial). This is a warning, not an error: nothing else about the
+language's permissive return/receive behavior changes because of it. It's also the only place a
+**builtin** call's result can be multi-assigned at all — `<s> : sqrt(16)` treats the builtin's
+single value as a one-element list for this purpose (`<s,t> : sqrt(16)` warns `returned 1,
+expected 2` and only `s` gets set). See [§7.2](#72-return--multi-assign-arity-is-almost-entirely-unchecked)
+for the full picture of what is and isn't checked.
+
+### 5.4 Return
+
+```
+return expr1 expr2 ...
+```
+
+A function can return zero or more space-separated values. `executeBlock` stops running the
+current block the moment it hits an explicit `return` (including one nested inside its own
+`if`/`while`/`for`, which propagates the return out through the wrapping block) — see
+[§7](#7-user-defined-function-results-and-multi-value-returns) for exactly how that propagation is
+scoped so a bare function-call statement elsewhere in the same block doesn't trigger it.
+
+If a function falls off the end of its body without hitting `return`, its result is built from
+whatever its declared **output variables** hold in local scope at that point (`0.0` for any that
+were never assigned) — see [§5.5](#55-function-definitions).
+
+### 5.5 Function definitions
+
+```
+fun <out1, out2> = name(in1, in2) {
+    ...
+}
+```
+
+- **The output list `<...>` does not control how many values the function actually returns —
+  only what happens if the body never hits an explicit `return`.** Two independent rules:
+  1. If the body executes `return expr1 expr2 ...`, the caller gets exactly that many values,
+     regardless of what (if anything) is declared in `<...>`. Even `fun <> = f() { return 1 2 3 }`
+     is legal and returns three values.
+  2. Only if the body falls off the end *without* hitting `return` does the declared list matter:
+     the function returns the current values of those named local variables, in order — zero
+     values for `<>`, one for `<x>`, two or more for `<a,b,...>`.
+
+  So `<>` is used both for functions that return nothing meaningful (`main()`) *and* for functions
+  that always return via explicit `return` (where the empty list is just decorative, since `return`
+  overrides it either way) — it is **not** specifically for "more than one output"; if anything the
+  opposite association would be closer, since `<>` literally declares *zero* named outputs.
+- Each call gets a **fresh, empty local scope** — there are no closures and no access to the
+  caller's variables. (There *is* a `globalSymbols` dictionary in `Evaluator` that variable lookups
+  fall back to, but nothing in the interpreter ever writes to it — it is permanently empty in the
+  current implementation. Don't rely on it for cross-function shared state; it doesn't currently do
+  anything.)
+- `main()` must exist, take no inputs, and is the program's entry point — `runProgram` calls it
+  with `args: []`. If `main` declares any inputs, that call will immediately throw
+  `wrongArgCount`.
+- **Duplicate definitions are a hard error.** `runProgram` collects every top-level `FunctionDefNode`
+  into a `[String: FunctionDefNode]` keyed by name; the moment it sees a second definition for a
+  name already seen (including a second `main`), it throws
+  `Runtime error: Function '<name>' already defined` and nothing runs. This is checked once, up
+  front, before `main` executes.
+- **A defined-but-never-called function is only a warning, not an error.** Before running `main`,
+  the evaluator walks the *entire* program's AST (including inside every other function body) to
+  collect every function name that's actually called anywhere, and prints
+  `Warning: function '<name>' is defined but never called` (once per such function, sorted by name,
+  `main` itself excluded from the check) via the normal `output` callback — so, unlike the `=`
+  fallback warning, this one *does* reach the app's on-screen console.
+
+### 5.6 Function calls
+
+```
+name(expr1, expr2, ...)
+```
+
+Resolution order: **built-ins are checked first**, then user-defined functions
+(`builtins[name]` before `userFunctions[name]`) — so you cannot shadow a built-in name like `sqrt`
+with your own function of the same name; the built-in always wins.
+
+Built-in functions reject string-literal arguments outright (`Error: Function '<f>' argument <n>
+must be a number, got '"..."'`) — they only ever operate on numbers. Passing too few arguments to a
+*user* function throws `wrongArgCount`; built-ins have no such check and will crash with an
+out-of-bounds array access if under-supplied (`args[0]`/`args[1]` unchecked) — this is a real
+robustness gap, see [§11](#11-known-limitations--maintainer-notes).
+
+**Under-supply is an error; over-supply is a warning.** `executeFunction` binds the *declared*
+input list positionally and throws `wrongArgCount` the moment it runs out of supplied values.
+Surplus arguments are the permissive direction: `f(1, 2)` against `fun <r> = f(a)` binds `a : 1`,
+evaluates and discards the `2`, and the call still runs — but it prints
+`Warning: '<name>' extra args provided - ignoring` through `output` first, so the dropped argument
+is visible on the on-screen console rather than swallowed. The warning fires once per offending
+*call*, so a call in a loop warns on every iteration.
+
+The asymmetry is deliberate: too few arguments leaves a parameter genuinely unbound and cannot
+proceed, whereas too many is recoverable and rejecting it would break programs that already run.
+
+Argument passing is strictly **by value**: arguments are reduced to `Double`s before the call and
+copied into the callee's fresh local scope, so `f(x)` can never modify the caller's `x`.
+
+### 5.7 `if` / `elseif` / `else`
+
+Standard: the first branch (`if` or any `elseif`) whose condition is non-zero runs; if none match
+and an `else` is present, it runs. See [§6.2](#62-truthiness) for what "non-zero" means here.
+
+### 5.8 `while`
+
+Runs `body` while `condition` is non-zero.
+
+### 5.9 `for`
+
+```
+for i : start to end step increment { ... }
+```
+
+`step` is optional and defaults to `1`. Unlike everything else in the language, the loop bounds are
+**truncated to `Int`** (`Int(startValDouble)`, etc.) once, before the loop starts — the loop
+variable itself is a whole-number `Double` counting up/down by `Int(step)` each iteration. A step of
+`0` throws `Runtime error: Step value cannot be zero`. A positive step counts up while
+`i <= end`; a negative step counts down while `i >= end`.
+
+### 5.10 Print
+
+```
+? expr1 expr2 ...      // with trailing newline
+! expr1 expr2 ...      // no trailing newline
+```
+
+Each item is printed followed by a single space (`"\(v) "` for numbers, `"<literal> "` for string
+literals), then the newline (or not) is appended once at the end. Note this means `?` always leaves
+a trailing space before the newline, and consecutive `!` prints run together with no separator
+between them beyond each item's own trailing space.
+
+Only **literal** string arguments are printed as text; anything else (numbers, variables,
+expressions, function calls) is evaluated and printed via Swift's default `Double` string
+interpolation — so integers print with a trailing `.0` (`9.0`, not `9`).
+
+---
+
+## 6. The type model: everything is a `Double`
+
+There is exactly one runtime value type. `NumberNode`/`VariableNode`/arithmetic all operate on
+`Double`. `StringNode` exists in the AST but **is not a general expression value** — the evaluator's
+generic `evaluate()` returns `.normal(0.0)` for any `StringNode` it encounters outside the two
+places that special-case it (print items, and the "reject as a builtin argument" check). Concretely:
+
+```
+x : "hello"     // legal to parse; x becomes 0.0, not the string "hello"
+? "hello"       // prints the literal text "hello " (this is the only place strings are "real")
+sqrt("4")       // Error: Function 'sqrt' argument 1 must be a number, got '"4"'
+```
+
+There is no boolean type, no arrays, no records/structs, no closures.
+
+### 6.1 Numbers
+
+All arithmetic is `Double`. `%` is `truncatingRemainder(dividingBy:)` (C-style remainder, sign
+follows the dividend, not Python's always-positive modulo).
+
+### 6.2 Truthiness
+
+`if`, `while`, and `&`/`|` all treat any value `!= 0` as true, `== 0` as false. Comparison and
+logical operators *produce* `1.0` for true and `0.0` for false, so they compose naturally:
+`a & b`, `x = 0`, etc.
+
+---
+
+## 7. User-defined function results and multi-value returns
+
+A user-defined function call (`FunctionCallNode` resolving through `userFunctions`, not
+`builtins`) always evaluates internally to `EvalControl.returnValues([...])`, even when it returns
+exactly one value — the same representation `<a,b> : f(...)` needs to capture multiple values.
+Every place that consumes an evaluated sub-expression as a plain number (assignment,
+compound-assign, binary operators, function-call arguments, `if`/`while` conditions, `for` bounds,
+print items, `return`'s own expressions) reduces either form to a single `Double` via a shared
+`numericValue(_:)` helper, which takes `.returnValues`'s *first* value (`0.0` if it returned
+nothing). So a single-value user function behaves exactly like a built-in wherever you use it:
+
+```
+fun <r> = square(x) { return x*x }
+
+fun <> = main() {
+    y : square(5)        // y becomes 25 — plain assignment takes the first return value
+    ? 1 + square(3)      // works inline too — prints "10.0 " (1 + 9)
+    square(4)            // a bare call statement just runs it and discards the result
+}
+```
+
+**Multi-assign is still the only way to capture more than one return value** — plain assignment
+only ever sees the first:
+
+```
+fun <m, i> = prime(n) { ... return m i }
+
+<d, k> : prime(9)   // captures both m and i
+d : prime(9)        // d only gets the first return value (m); i's value is unreachable this way
+```
+
+### 7.1 Why a bare call statement doesn't end up returning from its caller
+
+Because a user function call's `.returnValues` looks identical whether it came from an actual
+`return` or from evaluating a call expression, `executeBlock` cannot use "did this statement's
+evaluation produce `.returnValues`" as its return-detection signal on its own — that would make a
+throwaway statement like `square(4)` (called only for a side effect, if it had one) incorrectly
+terminate the function it's in, handing the callee's return values up as the caller's.
+
+Instead, `executeBlock` only treats a statement's `.returnValues` result as ending the block when
+the statement is one of the kinds that can structurally *contain or forward* an explicit `return` —
+`ReturnNode` itself, or a control-flow wrapper (`IfElseChainNode`, `WhileNode`, `ForLoopNode`) whose
+body might hold one:
+
+```swift
+switch stmt {
+case is ReturnNode, is IfElseChainNode, is WhileNode, is ForLoopNode:
+    if case .returnValues = result { return result }
+default:
+    break
+}
+```
+
+Every other statement kind (`AssignmentNode`, `CompoundAssignNode`, `MultiAssignNode`, or a bare
+`FunctionCallNode` statement) uses/discards whatever it gets back and always yields `.normal(...)`
+as its own result, so it never accidentally triggers this propagation. A `return` nested inside an
+`if`/`while`/`for` still correctly unwinds all the way out, because each wrapping control-flow node
+is itself in the propagating set.
+
+### 7.2 Return / multi-assign arity is almost entirely unchecked
+
+A `return` statement's expression count and a multi-assign's variable count are independent, and
+almost nothing about their relationship is validated. Verified case by case:
+
+- **Bare `return` with zero expressions is legal** and returns an empty list. `parseReturn`'s loop
+  simply breaks immediately if `}` (or something that looks like a new statement) follows `return`
+  with nothing in between — there is no minimum-one-expression check in the actual parser, contrary
+  to what the EBNF in [§3](#3-grammar-ebnf) implies (`"return" Expression { Expression }` reads as
+  "at least one"; the code doesn't enforce that).
+- **A function falling off the end with `<>` declared** also produces an empty return list, via the
+  fallback path in [§5.5](#55-function-definitions) (`def.outputs.map { ... }` on an empty array).
+- **Multi-assign against an empty return list**: every receiving variable is left completely
+  untouched (not zeroed) — see [§5.3](#53-multi-assign--the-way-to-consume-more-than-one-return-value).
+  If a receiver had no prior value, it stays genuinely undefined; referencing it later throws
+  `Error: Undefined variable`.
+- **Plain assignment against an empty return list**: `x : f()` sets `x` to `0.0` (the `numericValue`
+  fallback), not an error.
+- **Multi-assign with fewer returned values than variables** (`<a,b,c> : f()`, `f` returns 2): the
+  same "untouched, not zeroed" rule applies to the shortfall variable(s).
+- **Multi-assign with more returned values than variables** (`<p> : f()`, `f` returns 3): only the
+  first `N` (however many variables were listed) are captured; the rest are silently discarded —
+  there is no way to skip to "just the 2nd value" without also listing a placeholder for the 1st.
+- **The one check that does exist**: a count mismatch between the multi-assign's variable list and
+  the actual return count prints `Warning: '<name>' returned <n>, expected <m>` — see
+  [§5.3](#53-multi-assign--the-way-to-consume-more-than-one-return-value). This is purely
+  informational; it does not change truncation/zero-fill behavior, does not check *names* (only
+  counts), and has no equivalent for plain assignment (`x : f()` never warns, regardless of how many
+  values `f` actually returned).
+- **This is asymmetric with call *input* arguments**: too few arguments to a user function throws
+  `wrongArgCount` (a real, fatal `EvalError`, not a warning) — see [§5.6](#56-function-calls). Too
+  *many* input arguments is silently tolerated (the binding loop only iterates over declared inputs,
+  so extras are simply never read). So across the whole function-call mechanism, the only
+  fatal-by-default arity check is "too few call arguments"; every other direction (too many call
+  arguments, and both directions of return/receive-list mismatch) is either a non-fatal warning
+  (return/receive count only) or fully silent.
+
+None of this is enforced by variable *names* anywhere — see [§5.5](#55-function-definitions) for the
+mismatched-declaration example (`fun <p,q> = weird(x) { return 10 20 30 x }` returns four values
+under a two-name declaration with zero complaint).
+
+---
+
+## 8. Statement boundaries — why there are no semicolons
+
+Statements are separated purely by grammar shape and targeted lookahead, never by punctuation or
+newlines. Two heuristics do the real work, both in `Parser.swift`:
+
+- `looksLikeMultiAssignHeader(at:)` — distinguishes `<` starting a fresh `<a,b> : f(...)` statement
+  from `<` as a less-than comparison operator, by peeking ahead for the exact shape
+  `Identifier {"," Identifier} ">" ":"`.
+- `looksLikeNewStatement(at:)` — used by `PrintStmt`'s item list and `ReturnStmt`'s expression list,
+  both of which are *unseparated* sequences of expressions (`PrintItems ::= Expression {
+  Expression}`). Without a way to know when to stop, `? x` followed on the next line by `x -: 1`
+  would greedily consume that second `x` as one more thing to print, desyncing everything after it.
+  The heuristic: stop consuming more items the moment the upcoming tokens look like the start of a
+  new `Assignment`/`CompoundAssign`/`MultiAssign` (i.e., `identifier` followed by `:`/`=`/`+:`/`-:`,
+  or a multi-assign header).
+
+This is why print/return item lists work correctly with bare literals and variables between
+statements, but you should not expect the parser to gracefully recover from genuinely ambiguous
+input — when in doubt, put each statement on stricter footing (e.g. don't end a `return`/`print`
+list with a bare identifier that's also about to be reassigned on the very next line in a way that
+doesn't match the heuristic above).
+
+**Gap confirmed by testing:** `looksLikeNewStatement` only recognizes an *assignment-shaped*
+follow-on statement (`identifier` then `:`/`=`/`+:`/`-:`, or a multi-assign header) as the signal to
+stop consuming print/return items — it does **not** recognize a bare function-call statement
+(`identifier` then `(`). So a `?`/`return` item list immediately followed by a bare call statement
+on the next line will greedily swallow that call as one more item to print/return, instead of
+treating it as a separate statement:
+
+```
+? x
+someFunction(1)      // gets absorbed as a second print item of the "? x" line above,
+                      // not parsed as its own statement
+```
+
+If you need a bare call statement right after a `?`/`return` line, separate them with something the
+heuristic *does* recognize as a new statement (e.g. an assignment in between), or simply reorder so
+the bare call doesn't immediately follow an unterminated item list.
+
+---
+
+## 9. Built-in functions and constants
+
+All built-ins operate on and return `Double`; none accept string-literal arguments.
+
+| Function | Signature | Notes |
+|---|---|---|
+| `abs(x)` | 1 arg | absolute value |
+| `sqrt(x)` | 1 arg | square root; `NaN` for negative `x` (not an error) |
+| `pow(x, y)` | 2 args | `x` raised to `y` (equivalent to `x^y`) |
+| `log(x)` | 1 arg | natural log |
+| `sin(x)` `cos(x)` `tan(x)` | 1 arg each | radians |
+| `asin(x)` `acos(x)` `atan(x)` | 1 arg each | radians |
+| `atan2(y, x)` | 2 args | |
+| `max(x, y)` `min(x, y)` | 2 args each | |
+| `round(x)` | 1 arg | round-half-away-from-zero |
+| `ceil(x)` `floor(x)` | 1 arg each | |
+
+| Constant | Value |
+|---|---|
+| `pi` | `Double.pi` |
+| `e` | `M_E` |
+
+Constants resolve through the same lookup as variables (`symbols[name] ?? globalSymbols[name] ??
+constants[name]`), so a local variable named `pi` or `e` shadows the constant.
+
+---
+
+## 10. Diagnostics
+
+### 10.1 Lex errors (`Lexer.lexError`, shown as `Lex error: ...`)
+
+- `Lex error: Unexpected character '<c>' (U+XXXX)` — the character is not punctuation the language
+  recognizes, not an ASCII digit, and not an ASCII identifier character. The code point is included
+  because the usual cause is a homoglyph (`х` U+0445 for `x` U+0078), where the message would be
+  unreadable without it. See [§2.2](#22-identifiers).
+
+`tokenize()` stops at the first offending character and returns the tokens collected so far, so the
+token stream is deliberately truncated. **Callers must check `lexer.lexError` before parsing** — a
+parse error raised from a truncated stream points at the wrong place. `ComputeViewController` checks
+it immediately after `tokenize()` and returns.
+
+Unlike `Parser.parseError`, this is the lexer's *only* error case: everything else it cannot make
+sense of is still dropped silently (see [§2.3](#23-numbers) for malformed numbers, and
+[§11](#11-known-limitations--maintainer-notes) item 4).
+
+### 10.2 Parse errors (`ParseError`, shown as `Parse error: ...`)
+
+- `Unexpected token '<TokenType>'` — the parser hit a token it had no rule for at that position.
+  (After a fix in this session, this prints the token's *type* (e.g. `lParen`), not a raw dump of
+  the internal `Token` class instance — earlier this printed something like
+  `Unexpected token: Computer.Token`, which was itself the bug being diagnosed.)
+- `Invalid assignment operator '<tok>'. Use ':' instead.` — currently unused by any code path (no
+  call site constructs this case), reserved for future stricter assignment-operator checking.
+- `Missing '{' to start block` / `Missing '}' to close block`.
+
+Parsing stops at the first error (`parser.parseError`); nothing runs.
+
+### 10.3 Runtime errors (`EvalError`, shown as `Error: ...` / `Runtime error: ...`)
+
+- `Error: Undefined variable '<v>'`
+- `Error: Unknown function '<f>'`
+- `Error: Function '<f>' expects <n> arguments, got <m>'` — user functions only; see
+  [§5.6](#56-function-calls) for the equivalent (unchecked) built-in gap.
+- `Error: Function '<f>' argument <n> must be a number, got '<literal>'` — built-ins rejecting a
+  string-literal argument.
+- `Runtime error: <message>` — catch-all (e.g. `No main() function defined`, `Function '<name>'
+  already defined`, `Step value cannot be zero`, `Unsupported operator`).
+
+`runProgram` catches everything and writes the description through the `output` callback, so the UI
+always shows *something* rather than crashing the app on a bad program — except for the unchecked
+built-in argument-count gap noted in [§9](#9-built-in-functions-and-constants) / [§11](#11-known-limitations--maintainer-notes),
+which is a genuine Swift array-bounds crash, not a caught `Error`.
+
+### 10.4 Non-fatal warnings (also via `output`, so they reach the on-screen console)
+
+- `Warning: function '<name>' is defined but never called` — printed once per such function, before
+  `main` runs; see [§5.5](#55-function-definitions).
+- `Warning: '<name>' returned <n>, expected <m>` — a multi-assign's variable count didn't match the
+  actual return count; execution still proceeds with the usual truncate/leave-untouched behavior.
+  See [§5.3](#53-multi-assign--the-way-to-consume-more-than-one-return-value) and
+  [§7.2](#72-return--multi-assign-arity-is-almost-entirely-unchecked).
+- `Warning: '<name>' extra args provided - ignoring` — a call supplied more arguments than the
+  function declares; the surplus is dropped and the call proceeds. Printed once per offending
+  call, so a call inside a loop warns on each iteration. See [§5.6](#56-function-calls).
+
+Kept deliberately terse (one line, no multi-clause sentences) since the console renders on a narrow
+mobile width and wraps long messages across several lines.
+
+Contrast with the `=`-fallback-assignment warning ([§2.5](#25-operators-and-punctuation)), which is
+a bare Swift `print(...)` in `Parser.swift` and does **not** go through `output` — it never reaches
+this on-screen console at all, only Xcode's.
+
+---
+
+## 11. Known limitations & maintainer notes
+
+A running list of things that are real, verified behavior of the current interpreter and worth
+knowing before you extend it — some are fine as documented quirks, some are worth fixing:
+
+1. **A print/return item list swallows an immediately-following bare call statement** —
+   `looksLikeNewStatement` doesn't recognize `identifier(` as the start of a new statement, only
+   assignment shapes. See [§8](#8-statement-boundaries--why-there-are-no-semicolons).
+2. **Built-in functions don't check argument count.** `args[0]`/`args[1]` are accessed unchecked;
+   calling `sqrt()` with zero arguments crashes the interpreter (Swift array out-of-bounds) rather
+   than throwing a catchable `EvalError`.
+3. **`globalSymbols` is dead code.** It's consulted on every variable/constant lookup but nothing
+   in the interpreter ever writes to it — there is currently no actual mechanism for true global
+   variables shared across function calls.
+4. **Malformed numeric literals are silently dropped**, not reported as a lex error — see
+   [§2.3](#23-numbers). Note the asymmetry with an *unrecognized* character, which since the
+   ASCII-identifier change does produce a proper `Lex error` ([§10.1](#101-lex-errors-lexerlexerror-shown-as-lex-error-)):
+   `1.2.3` still vanishes from the token stream, `х` no longer does. Routing malformed numbers
+   through the same `lexError` channel would be the natural follow-up fix.
+5. **No scientific notation, no integer type, no arrays/collections, no closures.**
+6. **The `=`-fallback-assignment warning bypasses the app's console.** It's a bare Swift `print(...)`
+   call in `Parser.swift`, not routed through `Evaluator.output`, so it only ever appears in Xcode's
+   debug console, never on-screen in the app — unlike the unused-function warning, which does reach
+   the UI.
+7. **The editor's OCR/paste re-indenting logic in `ComputeViewController.swift` assumes `/* */`
+   block comments exist** (for indentation purposes only) even though the lexer doesn't recognize
+   them as comments at all — see [§2.1](#21-comments). If block comments are ever added to the
+   language, that's the other file that needs to be revisited too (though it will already "just
+   work" cosmetically).
+8. **Unary minus binds tighter than `^` on the base side** — `-2^2 == 4`, not the `-4` you'd get in
+   Python/JS. See [§4.1](#41-unary-minus-vs---a-real-gotcha).
+9. **User functions still accept too many arguments** — surplus arguments are evaluated and
+   dropped rather than rejected. This is no longer *silent* (it warns, see
+   [§5.6](#56-function-calls)), and is kept permissive on purpose so existing programs keep
+   running; promoting it to a hard `wrongArgCount` remains a one-line change in
+   `executeFunction` if that is ever wanted.
+
+---
+
+## 12. Architecture map
+
+| Stage | File | Responsibility |
+|---|---|---|
+| Lex | `Lexer.swift` | source `String` → `[Token]` |
+| Parse | `Parser.swift` | `[Token]` → `[ASTNode]` (one node per top-level statement), plus AST node type definitions |
+| Evaluate | `Evaluator.swift` | walks the AST, maintains per-call local symbol tables, resolves built-ins vs. user functions, drives all program `output` |
+| UI wiring | `ComputeViewController.swift` | owns the program/console `UITextView`s, invokes `Lexer` → `Parser` → `Evaluator` on Run, wires `Evaluator.output` to the on-screen console, plus save/load-to-Documents and OCR-scan-to-source features |
+
+`Evaluator.output: (String) -> Void` defaults to a plain `print(...)`, but the app always replaces
+it with a closure that appends to the console `UITextView` before calling `runProgram`. Anything
+written via `output` reaches the screen; anything written via a bare Swift `print(...)` elsewhere in
+`Parser`/`Lexer`/`Evaluator` does not (see item 6 in [§11](#11-known-limitations--maintainer-notes)).

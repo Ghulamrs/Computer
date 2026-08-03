@@ -7,9 +7,11 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		961DB3AD231A389000A049BA /* loop.swift in Sources */ = {isa = PBXBuildFile; fileRef = 961DB3AC231A389000A049BA /* loop.swift */; };
-		961DB3AF231A41A500A049BA /* print.swift in Sources */ = {isa = PBXBuildFile; fileRef = 961DB3AE231A41A500A049BA /* print.swift */; };
-		961DB3B1231A4D7900A049BA /* Express.swift in Sources */ = {isa = PBXBuildFile; fileRef = 961DB3B0231A4D7900A049BA /* Express.swift */; };
+		0DA399273514459795C50DB4 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 446F9766242712853A8EE180 /* SceneDelegate.swift */; };
+		4142CBFF301F17FD004C0B1A /* Lexer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4142CBFE301F17FD004C0B1A /* Lexer.swift */; };
+		4142CC01301F187E004C0B1A /* Parser.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4142CC00301F187E004C0B1A /* Parser.swift */; };
+		4142CC03301F1DB1004C0B1A /* Interpreter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4142CC02301F1DB1004C0B1A /* Interpreter.swift */; };
+		961DB3B1231A4D7900A049BA /* ExpressCompute.swift in Sources */ = {isa = PBXBuildFile; fileRef = 961DB3B0231A4D7900A049BA /* ExpressCompute.swift */; };
 		961DB3B3231A4E5A00A049BA /* template.swift in Sources */ = {isa = PBXBuildFile; fileRef = 961DB3B2231A4E5A00A049BA /* template.swift */; };
 		9650B8D722940E3600E35EA5 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9650B8D622940E3600E35EA5 /* AppDelegate.swift */; };
 		9650B8D922940E3600E35EA5 /* ViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9650B8D822940E3600E35EA5 /* ViewController.swift */; };
@@ -21,18 +23,14 @@
 		9650B8ED2294112500E35EA5 /* MainCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9650B8EC2294112500E35EA5 /* MainCoordinator.swift */; };
 		9650B8F32294188E00E35EA5 /* CalculateViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9650B8F22294188E00E35EA5 /* CalculateViewController.swift */; };
 		9650B8F5229418A400E35EA5 /* ComputeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9650B8F4229418A400E35EA5 /* ComputeViewController.swift */; };
-		96CE7CB9231999BF00DB60C9 /* Error.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96CE7CB8231999BF00DB60C9 /* Error.swift */; };
-		96CE7CBB23199AE500DB60C9 /* Expr.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96CE7CBA23199AE500DB60C9 /* Expr.swift */; };
-		96CE7CBD23199B3D00DB60C9 /* Math.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96CE7CBC23199B3D00DB60C9 /* Math.swift */; };
-		96CE7CBF2319B0C100DB60C9 /* func.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96CE7CBE2319B0C000DB60C9 /* func.swift */; };
-		96CE7CC12319B39900DB60C9 /* ifel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96CE7CC02319B39900DB60C9 /* ifel.swift */; };
-		96D4BA5D231615CD00B503DF /* Eval.swift in Sources */ = {isa = PBXBuildFile; fileRef = 96D4BA5C231615CD00B503DF /* Eval.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
-		961DB3AC231A389000A049BA /* loop.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = loop.swift; sourceTree = "<group>"; };
-		961DB3AE231A41A500A049BA /* print.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = print.swift; sourceTree = "<group>"; };
-		961DB3B0231A4D7900A049BA /* Express.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Express.swift; sourceTree = "<group>"; };
+		4142CBFE301F17FD004C0B1A /* Lexer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Lexer.swift; sourceTree = "<group>"; };
+		4142CC00301F187E004C0B1A /* Parser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Parser.swift; sourceTree = "<group>"; };
+		4142CC02301F1DB1004C0B1A /* Interpreter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Interpreter.swift; sourceTree = "<group>"; };
+		446F9766242712853A8EE180 /* SceneDelegate.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
+		961DB3B0231A4D7900A049BA /* ExpressCompute.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ExpressCompute.swift; sourceTree = "<group>"; };
 		961DB3B2231A4E5A00A049BA /* template.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = template.swift; sourceTree = "<group>"; };
 		9650B8D322940E3600E35EA5 /* Computer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Computer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		9650B8D622940E3600E35EA5 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
@@ -46,12 +44,6 @@
 		9650B8EC2294112500E35EA5 /* MainCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainCoordinator.swift; sourceTree = "<group>"; };
 		9650B8F22294188E00E35EA5 /* CalculateViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CalculateViewController.swift; sourceTree = "<group>"; };
 		9650B8F4229418A400E35EA5 /* ComputeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComputeViewController.swift; sourceTree = "<group>"; };
-		96CE7CB8231999BF00DB60C9 /* Error.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Error.swift; sourceTree = "<group>"; };
-		96CE7CBA23199AE500DB60C9 /* Expr.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Expr.swift; sourceTree = "<group>"; };
-		96CE7CBC23199B3D00DB60C9 /* Math.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = Math.swift; sourceTree = "<group>"; };
-		96CE7CBE2319B0C000DB60C9 /* func.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = func.swift; sourceTree = "<group>"; };
-		96CE7CC02319B39900DB60C9 /* ifel.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = ifel.swift; sourceTree = "<group>"; };
-		96D4BA5C231615CD00B503DF /* Eval.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Eval.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -84,26 +76,22 @@
 		9650B8D522940E3600E35EA5 /* Computer */ = {
 			isa = PBXGroup;
 			children = (
+				4142CC02301F1DB1004C0B1A /* Interpreter.swift */,
+				4142CC00301F187E004C0B1A /* Parser.swift */,
+				4142CBFE301F17FD004C0B1A /* Lexer.swift */,
 				9650B8D622940E3600E35EA5 /* AppDelegate.swift */,
+				446F9766242712853A8EE180 /* SceneDelegate.swift */,
 				9650B8D822940E3600E35EA5 /* ViewController.swift */,
 				9650B8F22294188E00E35EA5 /* CalculateViewController.swift */,
 				9650B8F4229418A400E35EA5 /* ComputeViewController.swift */,
 				9650B8E822940E7A00E35EA5 /* Coordinator.swift */,
 				9650B8EC2294112500E35EA5 /* MainCoordinator.swift */,
 				9650B8EA22940F5900E35EA5 /* Storyboarded.swift */,
-				961DB3B0231A4D7900A049BA /* Express.swift */,
-				96CE7CBE2319B0C000DB60C9 /* func.swift */,
-				96CE7CC02319B39900DB60C9 /* ifel.swift */,
-				961DB3AC231A389000A049BA /* loop.swift */,
-				961DB3AE231A41A500A049BA /* print.swift */,
+				961DB3B0231A4D7900A049BA /* ExpressCompute.swift */,
 				9650B8DA22940E3600E35EA5 /* Main.storyboard */,
 				9650B8DD22940E3700E35EA5 /* Assets.xcassets */,
 				9650B8DF22940E3700E35EA5 /* LaunchScreen.storyboard */,
 				9650B8E222940E3700E35EA5 /* Info.plist */,
-				96CE7CB8231999BF00DB60C9 /* Error.swift */,
-				96D4BA5C231615CD00B503DF /* Eval.swift */,
-				96CE7CBA23199AE500DB60C9 /* Expr.swift */,
-				96CE7CBC23199B3D00DB60C9 /* Math.swift */,
 				961DB3B2231A4E5A00A049BA /* template.swift */,
 			);
 			path = Computer;
@@ -181,22 +169,18 @@
 			buildActionMask = 2147483647;
 			files = (
 				9650B8D922940E3600E35EA5 /* ViewController.swift in Sources */,
-				961DB3AF231A41A500A049BA /* print.swift in Sources */,
-				961DB3B1231A4D7900A049BA /* Express.swift in Sources */,
+				961DB3B1231A4D7900A049BA /* ExpressCompute.swift in Sources */,
+				4142CBFF301F17FD004C0B1A /* Lexer.swift in Sources */,
 				9650B8D722940E3600E35EA5 /* AppDelegate.swift in Sources */,
 				9650B8E922940E7A00E35EA5 /* Coordinator.swift in Sources */,
 				9650B8ED2294112500E35EA5 /* MainCoordinator.swift in Sources */,
-				96D4BA5D231615CD00B503DF /* Eval.swift in Sources */,
-				96CE7CBF2319B0C100DB60C9 /* func.swift in Sources */,
-				96CE7CB9231999BF00DB60C9 /* Error.swift in Sources */,
-				961DB3AD231A389000A049BA /* loop.swift in Sources */,
-				96CE7CBB23199AE500DB60C9 /* Expr.swift in Sources */,
-				96CE7CBD23199B3D00DB60C9 /* Math.swift in Sources */,
 				961DB3B3231A4E5A00A049BA /* template.swift in Sources */,
 				9650B8EB22940F5900E35EA5 /* Storyboarded.swift in Sources */,
+				4142CC01301F187E004C0B1A /* Parser.swift in Sources */,
+				4142CC03301F1DB1004C0B1A /* Interpreter.swift in Sources */,
 				9650B8F32294188E00E35EA5 /* CalculateViewController.swift in Sources */,
-				96CE7CC12319B39900DB60C9 /* ifel.swift in Sources */,
 				9650B8F5229418A400E35EA5 /* ComputeViewController.swift in Sources */,
+				0DA399273514459795C50DB4 /* SceneDelegate.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -273,7 +257,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 12.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -328,7 +312,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 12.2;
+				IPHONEOS_DEPLOYMENT_TARGET = 13.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SDKROOT = iphoneos;
