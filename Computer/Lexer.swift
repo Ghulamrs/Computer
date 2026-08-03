@@ -19,6 +19,41 @@ enum TokenType {
     case stringLiteral(String)
     case lAngle, rAngle, comma
     case caret
+    case eof
+}
+
+extension TokenType: Equatable {
+    static func == (lhs: TokenType, rhs: TokenType) -> Bool {
+        switch (lhs, rhs) {
+        case (.number(let a), .number(let b)): return a == b
+        case (.identifier(let a), .identifier(let b)): return a == b
+        case (.stringLiteral(let a), .stringLiteral(let b)): return a == b
+
+        // Simple cases without associated values
+        case (.plus, .plus), (.minus, .minus), (.multiply, .multiply),
+             (.divide, .divide), (.modulus, .modulus),
+             (.assignColon, .assignColon),
+             (.equal, .equal), (.notEqual, .notEqual),
+             (.plusAssign, .plusAssign), (.minusAssign, .minusAssign),
+             (.lParen, .lParen), (.rParen, .rParen),
+             (.lBrace, .lBrace), (.rBrace, .rBrace),
+             (.ifKeyword, .ifKeyword), (.elseKeyword, .elseKeyword),
+             (.elseifKeyword, .elseifKeyword), (.whileKeyword, .whileKeyword),
+             (.forKeyword, .forKeyword), (.toKeyword, .toKeyword),
+             (.stepKeyword, .stepKeyword), (.funKeyword, .funKeyword),
+             (.returnKeyword, .returnKeyword),
+             (.less, .less), (.greater, .greater),
+             (.and, .and), (.or, .or),
+             (.printLine, .printLine), (.printInline, .printInline),
+             (.lAngle, .lAngle), (.rAngle, .rAngle),
+             (.comma, .comma), (.caret, .caret),
+             (.eof, .eof):
+            return true
+
+        default:
+            return false
+        }
+    }
 }
 
 class Token {

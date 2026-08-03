@@ -101,266 +101,321 @@ struct BinaryOpNode: ASTNode {
 
 class Parser {
     private var tokens: [Token]
-    private var position: Int = 0
+    private var currentIndex: Int = 0
     private(set) var parseError: Error?
 
-    init(tokens: [Token]) { self.tokens = tokens }
+    init(tokens: [Token]) {
+        self.tokens = tokens
+    }
+
+    // EOF is virtual: `Lexer.tokenize()` never appends a `.eof` token, so `tokens` contains
+    // only real ones and `.eof` is manufactured here on demand once the index runs past the
+    // end. That is what lets `consume`/`match` report a clean "Unexpected token 'eof'" at
+    // end of input instead of indexing out of bounds.
+    //
+    // Two consequences worth knowing before changing this:
+    //  - `currentToken.type == .eof` is exactly equivalent to `currentIndex >= tokens.count`,
+    //    so pairing the two in one condition is redundant - test either, not both.
+    //  - Loops that stop on end of input by checking `currentIndex < tokens.count` (parseBlock,
+    //    for one) depend on there being no terminator token. Emitting a real `.eof` would make
+    //    that guard stop firing and downgrade "Missing '}' to close block" to a generic
+    //    unexpected-token error.
+    private var currentToken: Token {
+        return currentIndex < tokens.count ? tokens[currentIndex]
+                                           : Token(type: .eof)
+    }
+
+    private func advance() {
+        currentIndex += 1
+    }
+
+    private func match(_ type: TokenType) -> Bool {
+        if currentToken.type == type {
+            advance()
+            return true
+        }
+        return false
+    }
+
+    private func consume(_ expected: TokenType) throws -> Token {
+        guard currentToken.type == expected else {
+            throw ParseError.unexpectedToken("\(currentToken.type)")
+        }
+        let tok = currentToken
+        advance()
+        return tok
+    }
+
+    private func consumeIdentifier() throws -> String {
+        guard case .identifier(let name) = currentToken.type else {
+            throw ParseError.unexpectedToken("\(currentToken.type)")
+        }
+        advance()
+        return name
+    }
 
     func parseProgram() -> [ASTNode] {
         var nodes: [ASTNode] = []
-        while position < tokens.count {
-            do { nodes.append(try parseExpression()) }
-            catch { parseError = error; break }
+        while currentIndex < tokens.count {
+            do {
+                nodes.append(try parseExpression())
+            } catch {
+                // Must be recorded, not just printed: ComputeViewController checks
+                // parser.parseError to decide whether to show the error and stop. A bare
+                // print() only reaches Xcode's console, leaving the app to run a truncated
+                // AST and report a misleading "No main() function defined" instead.
+                parseError = error
+                break
+            }
         }
         return nodes
     }
-    
-    private func parseExpression() throws -> ASTNode {
-        if position < tokens.count {
-            switch tokens[position].type {
-            case .ifKeyword: return try parseIfElseChain()
-            case .whileKeyword: return try parseWhile()
-            case .forKeyword: return try parseForLoop()
-            case .funKeyword: return try parseFunctionDef()
-            case .printLine: return try parsePrint(newline: true)
-            case .printInline: return try parsePrint(newline: false)
-            case .returnKeyword: return try parseReturn()
-            default: break
-            }
-        }
-        return try parseAssignmentOrTerm()
+
+    func parseExpression() throws -> ASTNode {
+        return try parseStatement()
     }
-    
-    // --- Return ---
-    private func parseReturn() throws -> ASTNode {
-        position += 1
-        var exprs: [ASTNode] = []
-        while position < tokens.count {
-            if case .rBrace = tokens[position].type { break }
-            if looksLikeNewStatement(at: position) { break }
-            exprs.append(try parseExpr())
-        }
-        return ReturnNode(exprs: exprs)
-    }
-    
-    // --- Assignment / MultiAssign / CompoundAssign ---
-    private func parseAssignmentOrTerm() throws -> ASTNode {
-        // Multi-assign <a,b> : func(...)
-        if position < tokens.count, case .lAngle = tokens[position].type {
-            position += 1
-            var vars: [String] = []
-            while position < tokens.count {
-                if case .identifier(let name) = tokens[position].type {
-                    vars.append(name); position += 1
-                } else if case .comma = tokens[position].type { position += 1 }
-                else if case .rAngle = tokens[position].type { position += 1; break }
-                else { throw ParseError.unexpectedToken("Unexpected in multi‑assign") }
+
+    func parseStatement() throws -> ASTNode {
+        switch currentToken.type {
+        case .identifier(let name):
+            advance()
+            switch currentToken.type {
+            case .assignColon:
+                _ = try consume(.assignColon)
+                let expr = try parseExpr()
+                return AssignmentNode(variable: name, expr: expr)
+            case .plusAssign:
+                _ = try consume(.plusAssign)
+                let expr = try parseExpr()
+                return CompoundAssignNode(variable: name, op: .plus, expr: expr)
+            case .minusAssign:
+                _ = try consume(.minusAssign)
+                let expr = try parseExpr()
+                return CompoundAssignNode(variable: name, op: .minus, expr: expr)
+            case .equal:
+                // Fallback assignment, per SHALIMAR_LANGUAGE.md §2.5. Deliberately a bare
+                // print() and not `output`, so this warning reaches Xcode's console only -
+                // see §10.4, which documents that asymmetry.
+                print("Warning: '=' used for assignment. Use ':' instead.")
+                _ = try consume(.equal)
+                let expr = try parseExpr()
+                return AssignmentNode(variable: name, expr: expr)
+            default:
+                // Not an assignment of any kind, so this identifier begins an expression
+                // statement - most importantly a bare call like `f(4)`, which §7.1 requires
+                // to be legal. Rewind over the identifier and let the expression parser
+                // handle it; throwing here would reject documented programs.
+                currentIndex -= 1
+                return try parseExpr()
             }
-            guard case .assignColon = tokens[position].type else {
-                throw ParseError.unexpectedToken("Expected ':' after multi‑assign")
-            }
-            position += 1
-            guard case .identifier(let fname) = tokens[position].type else {
-                throw ParseError.unexpectedToken("Expected function call")
-            }
-            position += 1
-            let call = try parseFunctionCall(name: fname)
-            return MultiAssignNode(variables: vars, call: call)
-        }
-        
-        // Normal assignment / compound assignment
-        if position < tokens.count, case .identifier(let name) = tokens[position].type {
-            if position + 1 < tokens.count {
-                switch tokens[position + 1].type {
-                case .assignColon:
-                    position += 2; let expr = try parseExpr()
-                    return AssignmentNode(variable: name, expr: expr)
-                case .equal:
-                    print("Warning: '=' used for assignment. Use ':' instead.")
-                    position += 2; let expr = try parseExpr()
-                    return AssignmentNode(variable: name, expr: expr)
-                case .plusAssign:
-                    position += 2; let expr = try parseExpr()
-                    return CompoundAssignNode(variable: name, op: .plus, expr: expr)
-                case .minusAssign:
-                    position += 2; let expr = try parseExpr()
-                    return CompoundAssignNode(variable: name, op: .minus, expr: expr)
-                default: break
+
+        case .lAngle:
+            if looksLikeMultiAssignHeader(at: currentIndex) {
+                _ = try consume(.lAngle)
+                var vars: [String] = []
+                while true {
+                    if case .identifier(let v) = currentToken.type {
+                        vars.append(v); advance()
+                    } else if match(.comma) {
+                        continue
+                    } else if match(.rAngle) {
+                        break
+                    } else {
+                        throw ParseError.unexpectedToken("\(currentToken.type)")
+                    }
                 }
+                _ = try consume(.assignColon)
+                let fname = try consumeIdentifier()
+                let call = try parseFunctionCall(name: fname)
+                return MultiAssignNode(variables: vars, call: call)
             }
+            throw ParseError.unexpectedToken("Unexpected '<'")
+
+        case .returnKeyword:
+            _ = try consume(.returnKeyword)
+            var exprs: [ASTNode] = []
+            // `}` and end-of-input must stop the item list as well as a new-statement
+            // lookalike: looksLikeNewStatement only recognizes assignment shapes and
+            // multi-assign headers, so without these guards `return x }` tries to parse
+            // the closing brace as an expression and every function fails to parse.
+            // (End of input is the `currentIndex` test - see the note on `currentToken`.)
+            while currentIndex < tokens.count,
+                  currentToken.type != .rBrace,
+                  !looksLikeNewStatement(at: currentIndex) {
+                exprs.append(try parseExpr())
+            }
+            return ReturnNode(exprs: exprs)
+
+        case .printLine:
+            _ = try consume(.printLine)
+            return try parsePrint(newline: true)
+        case .printInline:
+            _ = try consume(.printInline)
+            return try parsePrint(newline: false)
+
+        case .ifKeyword:
+            return try parseIfElseChain()
+        case .whileKeyword:
+            return try parseWhile()
+        case .forKeyword:
+            return try parseForLoop()
+        case .funKeyword:
+            return try parseFunctionDef()
+
+        default:
+            return try parseExpr()
         }
-        return try parseTerm()
     }
     
-    // --- Block ---
-    private func parseBlock() throws -> [ASTNode] {
-        guard position < tokens.count else { throw ParseError.missingOpeningBrace }
-        guard case .lBrace = tokens[position].type else { throw ParseError.missingOpeningBrace }
-        position += 1
-        
+    func parseBlock() throws -> [ASTNode] {
+        _ = try consume(.lBrace)
         var stmts: [ASTNode] = []
-        while position < tokens.count {
-            if case .rBrace = tokens[position].type {
-                position += 1
-                return stmts
+        while currentToken.type != .rBrace {
+            guard currentIndex < tokens.count else {
+                throw ParseError.missingClosingBrace
             }
             stmts.append(try parseExpression())
         }
-        throw ParseError.missingClosingBrace
+        _ = try consume(.rBrace)
+        return stmts
     }
     
-    // --- IfElse ---
-    private func parseIfElseChain() throws -> ASTNode {
-        position += 1
+    func parseIfElseChain() throws -> ASTNode {
+        _ = try consume(.ifKeyword)
         let cond = try parseExpr()
         let body = try parseBlock()
         var branches: [(ASTNode, [ASTNode])] = [(cond, body)]
 
-        while position < tokens.count {
-            if case .elseifKeyword = tokens[position].type {
-                position += 1
-                let cond = try parseExpr()
-                let body = try parseBlock()
-                branches.append((cond, body))
-            } else { break }
+        while match(.elseifKeyword) {
+            let cond = try parseExpr()
+            let body = try parseBlock()
+            branches.append((cond, body))
         }
-        
+
         var elseBranch: [ASTNode]? = nil
-        if position < tokens.count, case .elseKeyword = tokens[position].type {
-            position += 1
+        if match(.elseKeyword) {
             elseBranch = try parseBlock()
         }
         return IfElseChainNode(branches: branches, elseBranch: elseBranch)
     }
-    
-    // --- While ---
-    private func parseWhile() throws -> ASTNode {
-        position += 1
+
+    func parseWhile() throws -> ASTNode {
+        _ = try consume(.whileKeyword)
         let cond = try parseExpr()
         let body = try parseBlock()
         return WhileNode(condition: cond, body: body)
     }
 
-    // --- For with optional step ---
-    private func parseForLoop() throws -> ASTNode {
-        position += 1
-        guard case .identifier(let name) = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected loop variable")
-        }
-        position += 1
-        guard case .assignColon = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected ':' after loop variable")
-        }
-        position += 1
+    func parseForLoop() throws -> ASTNode {
+        _ = try consume(.forKeyword)
+        let varName = try consumeIdentifier()
+        _ = try consume(.assignColon)
         let startExpr = try parseExpr()
-        guard case .toKeyword = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected 'to' in for loop")
-        }
-        position += 1
+        _ = try consume(.toKeyword)
         let endExpr = try parseExpr()
 
         var stepExpr: ASTNode = NumberNode(value: 1.0)
-        if position < tokens.count, case .stepKeyword = tokens[position].type {
-            position += 1
+        if match(.stepKeyword) {
             stepExpr = try parseExpr()
         }
-        
+
         let body = try parseBlock()
-        return ForLoopNode(variable: name, startExpr: startExpr, endExpr: endExpr, stepExpr: stepExpr, body: body)
+        return ForLoopNode(variable:  varName,
+                           startExpr: startExpr,
+                           endExpr:   endExpr,
+                           stepExpr:  stepExpr,
+                           body:      body)
     }
     
-    // --- Function Definition ---
-    private func parseFunctionDef() throws -> ASTNode {
-        position += 1
+    func parseFunctionDef() throws -> ASTNode {
+        _ = try consume(.funKeyword)
+
         var outputs: [String] = []
-        if case .lAngle = tokens[position].type {
-            position += 1
-            while position < tokens.count {
-                if case .identifier(let outName) = tokens[position].type {
-                    outputs.append(outName); position += 1
-                } else if case .comma = tokens[position].type { position += 1 }
-                else if case .rAngle = tokens[position].type { position += 1; break }
-                else { throw ParseError.unexpectedToken("Unexpected in function outputs") }
+        if match(.lAngle) {
+            while true {
+                switch currentToken.type {
+                case .identifier(let outName):
+                    outputs.append(outName); advance()
+                case .comma:
+                    advance()
+                case .rAngle:
+                    advance(); break
+                default:
+                    throw ParseError.unexpectedToken("\(currentToken.type)")
+                }
+                if currentToken.type == .equal { break }
             }
         }
-        guard case .equal = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected '=' after output list")
-        }
-        position += 1
-        guard case .identifier(let name) = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected function name")
-        }
-        position += 1
-        guard case .lParen = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected '(' after function name")
-        }
-        position += 1
+
+        _ = try consume(.equal)
+        let name = try consumeIdentifier()
+        _ = try consume(.lParen)
+
         var inputs: [String] = []
-        while position < tokens.count {
-            if case .identifier(let arg) = tokens[position].type {
-                inputs.append(arg); position += 1
-            } else if case .comma = tokens[position].type { position += 1 }
-            else if case .rParen = tokens[position].type { position += 1; break }
-            else { throw ParseError.unexpectedToken("Unexpected token in function inputs") }
+        while currentToken.type != .rParen {
+            switch currentToken.type {
+            case .identifier(let arg):
+                inputs.append(arg); advance()
+            case .comma:
+                advance()
+            default:
+                throw ParseError.unexpectedToken("\(currentToken.type)")
+            }
         }
+        _ = try consume(.rParen)
+
         let body = try parseBlock()
         return FunctionDefNode(name: name, inputs: inputs, outputs: outputs, body: body)
     }
-    // --- Print ---
-    private func parsePrint(newline: Bool) throws -> ASTNode {
-        position += 1
+
+    func parsePrint(newline: Bool) throws -> ASTNode {
         var items: [ASTNode] = []
-        while position < tokens.count, startsTerm(tokens[position].type), !looksLikeNewStatement(at: position) {
+        while currentIndex < tokens.count,
+              startsTerm(currentToken.type),
+              !looksLikeNewStatement(at: currentIndex) {
             items.append(try parseExpr())
         }
         return PrintNode(items: items, newline: newline)
     }
     
-    // --- Term ---
-    private func parseTerm() throws -> ASTNode {
-        guard position < tokens.count else {
-            throw ParseError.unexpectedToken("Unexpected end of input")
-        }
-        let token = tokens[position]
-        position += 1
+    func parseTerm() throws -> ASTNode {
+        let token = currentToken
+        advance()
         switch token.type {
-        case .number(let value): return NumberNode(value: value)
-        case .stringLiteral(let str): return StringNode(value: str)
+        case .number(let value):
+            return NumberNode(value: value)
+        case .stringLiteral(let str):
+            return StringNode(value: str)
         case .identifier(let name):
-            if position < tokens.count, case .lParen = tokens[position].type {
+            if currentToken.type == .lParen {
                 return try parseFunctionCall(name: name)
             }
             return VariableNode(name: name)
         case .minus:
-            // Unary minus: "-Term", e.g. a negative literal or "-sqrt(4)".
             let operand = try parseTerm()
             if let num = operand as? NumberNode {
                 return NumberNode(value: -num.value)
             }
             return BinaryOpNode(left: NumberNode(value: 0), right: operand, op: .minus)
         case .lParen:
-            // Grouping: "(" Expression ")" — controls order only, no precedence change.
             let expr = try parseExpr()
-            guard position < tokens.count, case .rParen = tokens[position].type else {
-                throw ParseError.unexpectedToken("Expected ')' to close grouped expression")
-            }
-            position += 1
+            _ = try consume(.rParen)
             return expr
         default:
             throw ParseError.unexpectedToken("\(token.type)")
         }
     }
 
+
     // --- Expression, by precedence (lowest to highest binding):
     //     "|"  <  "&"  <  "=" "!=" "<" ">"  <  "+" "-"  <  "*" "/" "%"  <  Term
-    private func parseExpr() throws -> ASTNode {
+    func parseExpr() throws -> ASTNode {
         return try parseOr()
     }
 
     private func parseOr() throws -> ASTNode {
         var left = try parseAnd()
-        while position < tokens.count, case .or = tokens[position].type {
-            position += 1
+        while match(.or) {
             let right = try parseAnd()
             left = BinaryOpNode(left: left, right: right, op: .or)
         }
@@ -369,8 +424,7 @@ class Parser {
 
     private func parseAnd() throws -> ASTNode {
         var left = try parseComparison()
-        while position < tokens.count, case .and = tokens[position].type {
-            position += 1
+        while match(.and) {
             let right = try parseComparison()
             left = BinaryOpNode(left: left, right: right, op: .and)
         }
@@ -379,44 +433,43 @@ class Parser {
 
     private func parseComparison() throws -> ASTNode {
         var left = try parseAdditive()
-        while position < tokens.count {
-            if case .lAngle = tokens[position].type, looksLikeMultiAssignHeader(at: position) {
-                // A new "<a,b> : f(...)" statement starts here, not a "<" comparison.
+        while true {
+            if currentToken.type == .lAngle,
+               looksLikeMultiAssignHeader(at: currentIndex) {
                 break
             }
-            guard let op = comparisonOperator(for: tokens[position].type) else { break }
-            position += 1
+            guard let op = comparisonOperator(for: currentToken.type) else { break }
+            advance()
             let right = try parseAdditive()
             left = BinaryOpNode(left: left, right: right, op: op)
         }
         return left
     }
 
-    private func parseAdditive() throws -> ASTNode {
+    func parseAdditive() throws -> ASTNode {
         var left = try parseMultiplicative()
-        while position < tokens.count, let op = additiveOperator(for: tokens[position].type) {
-            position += 1
+        while let op = additiveOperator(for: currentToken.type) {
+            advance()
             let right = try parseMultiplicative()
             left = BinaryOpNode(left: left, right: right, op: op)
         }
         return left
     }
 
-    private func parseMultiplicative() throws -> ASTNode {
+    func parseMultiplicative() throws -> ASTNode {
         var left = try parsePower()
-        while position < tokens.count, let op = multiplicativeOperator(for: tokens[position].type) {
-            position += 1
+        while let op = multiplicativeOperator(for: currentToken.type) {
+            advance()
             let right = try parsePower()
             left = BinaryOpNode(left: left, right: right, op: op)
         }
         return left
     }
 
-    // Right-associative: "2 ^ 3 ^ 2" is "2 ^ (3 ^ 2)".
-    private func parsePower() throws -> ASTNode {
+    func parsePower() throws -> ASTNode {
         let left = try parseTerm()
-        if position < tokens.count, case .caret = tokens[position].type {
-            position += 1
+        if currentToken.type == .caret {
+            advance()
             let right = try parsePower()
             return BinaryOpNode(left: left, right: right, op: .power)
         }
@@ -479,7 +532,8 @@ class Parser {
             default: break
             }
         }
-        if start < tokens.count, case .lAngle = tokens[start].type, looksLikeMultiAssignHeader(at: start) {
+        if start < tokens.count, case .lAngle = tokens[start].type,
+           looksLikeMultiAssignHeader(at: start) {
             return true
         }
         return false
@@ -487,35 +541,28 @@ class Parser {
 
     private func startsTerm(_ type: TokenType) -> Bool {
         switch type {
-        case .number, .stringLiteral, .identifier: return true
+        // .minus and .lParen matter for print item lists: without them `? -2^2` and
+        // `? (1+2)` collect zero items and print a blank line, because parsePrint stops
+        // as soon as the next token doesn't look like the start of a term.
+        case .number, .stringLiteral, .identifier, .minus, .lParen: return true
         default: return false
         }
     }
 
     // --- FunctionCall ::= Identifier "(" [ Expression { "," Expression } ] ")" ---
     // `name` has already been consumed by the caller; position is expected at "(".
-    private func parseFunctionCall(name: String) throws -> FunctionCallNode {
-        guard position < tokens.count, case .lParen = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected '(' after function name '\(name)'")
-        }
-        position += 1
+    func parseFunctionCall(name: String) throws -> FunctionCallNode {
+        _ = try consume(.lParen)
         var args: [ASTNode] = []
-        if position < tokens.count, case .rParen = tokens[position].type {
-            position += 1
+        if match(.rParen) {
             return FunctionCallNode(name: name, args: args)
         }
         while true {
             args.append(try parseExpr())
-            if position < tokens.count, case .comma = tokens[position].type {
-                position += 1
-                continue
-            }
+            if match(.comma) { continue }
             break
         }
-        guard position < tokens.count, case .rParen = tokens[position].type else {
-            throw ParseError.unexpectedToken("Expected ')' after arguments to '\(name)'")
-        }
-        position += 1
+        _ = try consume(.rParen)
         return FunctionCallNode(name: name, args: args)
     }
 }
