@@ -1,13 +1,13 @@
 # The Shalimar Language
 
 A developer reference for **Shalimar**, the small numeric scripting language interpreted by
-`Lexer.swift` / `Parser.swift` / `Evaluator.swift` in this project (Xcode project `Computer`,
+`Lexer.swift` / `Parser.swift` / `Interpreter.swift` in this project (Xcode project `Computer`,
 target `Computer`). This document is the authoritative specification: when the interpreter and
 this document disagree, that is a conformance bug in the interpreter, not a documentation error —
 fix the code, or deliberately renegotiate and update this file, but don't let them silently drift.
 
 This file both teaches the language to someone writing `.shm` programs, and documents the
-interpreter's actual internals for whoever maintains `Lexer.swift`/`Parser.swift`/`Evaluator.swift`.
+interpreter's actual internals for whoever maintains `Lexer.swift`/`Parser.swift`/`Interpreter.swift`.
 Sections marked **Implementation note** are for the latter audience and describe real, verified
 behavior of the current code — including a couple of sharp edges worth knowing before you rely on
 them.
@@ -156,12 +156,28 @@ identifier predicates. That is the intended split — non-ASCII is a hazard when
 | `!` | print with no trailing newline (only when *not* immediately followed by `=`) |
 | `"` | string literal delimiter |
 
+**Implementation note — `TokenType.eof` is never emitted.** The enum has an `eof` case, but
+`Lexer.tokenize()` never appends one: the token array contains only real tokens. End of input is
+represented *virtually*, by `Parser.currentToken` manufacturing `Token(type: .eof)` once
+`currentIndex` runs past the end. This is what lets `consume`/`match` report a clean
+`Unexpected token 'eof'` at end of input instead of indexing out of bounds.
+
+Two consequences, both easy to get wrong:
+
+- `currentToken.type == .eof` and `currentIndex >= tokens.count` are the *same test*. Writing
+  `while currentIndex < tokens.count && currentToken.type != .eof` is redundant — the second half
+  can never decide anything. Test one or the other.
+- Loops that detect end of input via `currentIndex < tokens.count` (`parseBlock` among them) depend
+  on there being no terminator token. Making the lexer emit a real `.eof` would stop that guard
+  firing and downgrade `Missing '}' to close block` into a generic unexpected-token error, so that
+  change would have to be made across the parser in one pass, not file by file.
+
 **`=` is overloaded three ways**, disambiguated purely by grammatical position:
 1. Inside an expression, it's the **equality comparison** operator (`if d = 0 { ... }`).
 2. At the very start of a statement, `identifier = expr` is accepted as a **fallback assignment
    operator** — it behaves exactly like `identifier : expr`, but the parser prints
    `Warning: '=' used for assignment. Use ':' instead.` to stdout (via Swift's `print`, **not**
-   through the `Evaluator.output` callback, so this particular warning never reaches the app's
+   through the `Interpreter.output` callback, so this particular warning never reaches the app's
    on-screen console — only Xcode's console).
 3. In a function definition header, `fun <outputs> = name(inputs) { ... }` — the separator between
    the output list and the function name.
@@ -360,7 +376,7 @@ fun <out1, out2> = name(in1, in2) {
   overrides it either way) — it is **not** specifically for "more than one output"; if anything the
   opposite association would be closer, since `<>` literally declares *zero* named outputs.
 - Each call gets a **fresh, empty local scope** — there are no closures and no access to the
-  caller's variables. (There *is* a `globalSymbols` dictionary in `Evaluator` that variable lookups
+  caller's variables. (There *is* a `globalSymbols` dictionary in `Interpreter` that variable lookups
   fall back to, but nothing in the interpreter ever writes to it — it is permanently empty in the
   current implementation. Don't rely on it for cross-function shared state; it doesn't currently do
   anything.)
@@ -445,6 +461,15 @@ between them beyond each item's own trailing space.
 Only **literal** string arguments are printed as text; anything else (numbers, variables,
 expressions, function calls) is evaluated and printed via Swift's default `Double` string
 interpolation — so integers print with a trailing `.0` (`9.0`, not `9`).
+
+**Implementation note — where the item list stops.** `parsePrint` keeps consuming items while the
+next token could begin a term (`startsTerm`) and doesn't look like the start of a new statement
+(`looksLikeNewStatement`, see [§8](#8-statement-boundaries--why-there-are-no-semicolons)). That makes
+`startsTerm` load-bearing rather than a convenience: a token missing from it doesn't produce an
+error, it silently ends the list. When it accepted only numbers, strings and identifiers, `? -2^2`
+and `? (1+2)` collected *zero* items and printed a blank line — no diagnostic at all. It now also
+accepts `-` and `(`. If you extend the expression grammar with a new prefix token, add it here too,
+or printing it will quietly produce nothing.
 
 ---
 
@@ -734,7 +759,7 @@ knowing before you extend it — some are fine as documented quirks, some are wo
    through the same `lexError` channel would be the natural follow-up fix.
 5. **No scientific notation, no integer type, no arrays/collections, no closures.**
 6. **The `=`-fallback-assignment warning bypasses the app's console.** It's a bare Swift `print(...)`
-   call in `Parser.swift`, not routed through `Evaluator.output`, so it only ever appears in Xcode's
+   call in `Parser.swift`, not routed through `Interpreter.output`, so it only ever appears in Xcode's
    debug console, never on-screen in the app — unlike the unused-function warning, which does reach
    the UI.
 7. **The editor's OCR/paste re-indenting logic in `ComputeViewController.swift` assumes `/* */`
@@ -758,10 +783,35 @@ knowing before you extend it — some are fine as documented quirks, some are wo
 |---|---|---|
 | Lex | `Lexer.swift` | source `String` → `[Token]` |
 | Parse | `Parser.swift` | `[Token]` → `[ASTNode]` (one node per top-level statement), plus AST node type definitions |
-| Evaluate | `Evaluator.swift` | walks the AST, maintains per-call local symbol tables, resolves built-ins vs. user functions, drives all program `output` |
-| UI wiring | `ComputeViewController.swift` | owns the program/console `UITextView`s, invokes `Lexer` → `Parser` → `Evaluator` on Run, wires `Evaluator.output` to the on-screen console, plus save/load-to-Documents and OCR-scan-to-source features |
+| Evaluate | `Interpreter.swift` | walks the AST, maintains per-call local symbol tables, resolves built-ins vs. user functions, drives all program `output` |
+| UI wiring | `ComputeViewController.swift` | owns the program/console `UITextView`s, invokes `Lexer` → `Parser` → `Interpreter` on Run, wires `Interpreter.output` to the on-screen console, plus save/load-to-Documents and OCR-scan-to-source features |
+| Test harness | `Tests/harness/main.swift` | command-line driver over the three core files; mirrors `ComputeTapped`'s order (lex → check `lexError` → parse → check `parseError` → run) so the suite tests what the app actually does |
+| Regression suite | `Tests/regression.sh` | ~70 cases asserting the behavior described in this document; exits non-zero on failure |
 
-`Evaluator.output: (String) -> Void` defaults to a plain `print(...)`, but the app always replaces
+### 12.1 Running the tests
+
+The language core is pure Foundation with no UIKit dependency, so it compiles and runs outside the
+app — no simulator and no Xcode test target required:
+
+```
+./Tests/regression.sh
+```
+
+Every case traces to a claim in this document. **When a case and this document disagree, the
+document wins** and the interpreter is what gets fixed — same rule as the preamble.
+
+A pre-commit hook in `.githooks/pre-commit` runs the suite against the *staged* tree (via
+`git checkout-index` into a scratch directory, so an unstaged local fix can't mask a commit that is
+broken on its own). Enable it once per clone:
+
+```
+git config core.hooksPath .githooks
+```
+
+It skips unless the commit touches `Lexer`/`Parser`/`Interpreter` or `Tests/`, and
+`git commit --no-verify` overrides it.
+
+`Interpreter.output: (String) -> Void` defaults to a plain `print(...)`, but the app always replaces
 it with a closure that appends to the console `UITextView` before calling `runProgram`. Anything
 written via `output` reaches the screen; anything written via a bare Swift `print(...)` elsewhere in
-`Parser`/`Lexer`/`Evaluator` does not (see item 6 in [§11](#11-known-limitations--maintainer-notes)).
+`Parser`/`Lexer`/`Interpreter` does not (see item 6 in [§11](#11-known-limitations--maintainer-notes)).
