@@ -406,24 +406,73 @@ Resolution order: **built-ins are checked first**, then user-defined functions
 with your own function of the same name; the built-in always wins.
 
 Built-in functions reject string-literal arguments outright (`Error: Function '<f>' argument <n>
-must be a number, got '"..."'`) — they only ever operate on numbers. Passing too few arguments to a
-*user* function throws `wrongArgCount`; built-ins have no such check and will crash with an
-out-of-bounds array access if under-supplied (`args[0]`/`args[1]` unchecked) — this is a real
-robustness gap, see [§11](#11-known-limitations--maintainer-notes).
+must be a number, got '"..."'`) — they only ever operate on numbers. The string-literal check runs
+*before* the argument-count check below, so `pow("a")` reports the bad argument type at position 1
+rather than the missing second argument.
 
-**Under-supply is an error; over-supply is a warning.** `executeFunction` binds the *declared*
-input list positionally and throws `wrongArgCount` the moment it runs out of supplied values.
-Surplus arguments are the permissive direction: `f(1, 2)` against `fun <r> = f(a)` binds `a : 1`,
-evaluates and discards the `2`, and the call still runs — but it prints
-`Warning: '<name>' extra args provided - ignoring` through `output` first, so the dropped argument
-is visible on the on-screen console rather than swallowed. The warning fires once per offending
-*call*, so a call in a loop warns on every iteration.
+**Under-supply is an error; over-supply is a warning — for built-ins and user functions alike.**
+`executeFunction` binds a user function's *declared* input list positionally and throws
+`wrongArgCount` the moment it runs out of supplied values. Built-ins are checked the same way
+against the arity recorded alongside each one (`Builtin.arity` in `Interpreter.swift`):
+`sqrt()` throws `Error: Function 'sqrt' expects 1 arguments, got 0`, `pow(2)` throws
+`expects 2 arguments, got 1`.
+
+Surplus arguments are the permissive direction in both cases: `f(1, 2)` against `fun <r> = f(a)`
+binds `a : 1`, evaluates and discards the `2`, and the call still runs — as does `sqrt(16, 99)`,
+which returns `4`. Either prints `Warning: '<name>' extra args provided - ignoring` through
+`output` first, so the dropped argument is visible on the on-screen console rather than swallowed.
+The warning fires once per offending *call*, so a call in a loop warns on every iteration.
 
 The asymmetry is deliberate: too few arguments leaves a parameter genuinely unbound and cannot
 proceed, whereas too many is recoverable and rejecting it would break programs that already run.
 
+**Implementation note:** each built-in's arity is stored next to its closure rather than derived,
+because the closures index `args[0]`/`args[1]` directly. Under-supply used to reach that indexing
+and trap on an array bound — and a Swift bounds violation is not a catchable `Error`, so it bypassed
+`runProgram`'s `do`/`catch` entirely and killed the app with nothing printed. Keeping arity in the
+same literal as the closure is what stops the check and the indexing drifting apart; a new built-in
+that reads `args[2]` must declare `arity: 3` in the same breath.
+
 Argument passing is strictly **by value**: arguments are reduced to `Double`s before the call and
 copied into the callee's fresh local scope, so `f(x)` can never modify the caller's `x`.
+
+### 5.6.1 Recursion depth limits
+
+Recursion is supported, but bounded. Two limits apply, and the first one reached throws:
+
+| Limit | Value | Error |
+|---|---|---|
+| Per function | `256 / (declared inputs + 1)` | `Runtime error: Recursion too deep in '<name>' (limit <n>)` |
+| Whole program | 1024 frames total | `Runtime error: Call stack too deep (limit 1024)` |
+
+So a function declaring no inputs may nest 256 deep, one input 128, two inputs 85, three 64. The
+cap scales down with arity on the reasoning that a wider function's frame carries more bound locals.
+Integer division, floored at 1.
+
+**These count stack depth, not calls made.** A loop calling the same function 5,000 times in
+sequence is unaffected — each call returns, and decrements, before the next begins. Only frames
+still on the stack count. The counter is decremented on the throwing path as well as the normal
+one, so a caught-and-reported failure deep in a call chain doesn't leave the budget permanently
+consumed for later calls.
+
+The **whole-program backstop exists because the per-function limit cannot see mutual recursion**:
+in a cycle `a → b → c → a`, no single function ever approaches its own cap while the frames
+accumulate regardless. Measured before the backstop was added, 40 zero-input functions in a cycle
+(up to 10,240 frames) still overflowed the native stack. 1024 sits deliberately between the two —
+4× the largest per-function limit, so ordinary nesting never reaches it, and comfortably under the
+~2,500 frames measured as survivable in practice.
+
+**Why a limit at all:** exceeding the native stack is a `SIGSEGV`, not a Swift error. Like a trap
+([§10.3](#103-runtime-errors-evalerror-shown-as-error---runtime-error-)) it cannot be caught, so
+`fun <r> = d(n) { return d(n+1) }` used to kill the app outright with a blank console. Counting
+frames in the interpreter is what converts that into a reportable `EvalError`.
+
+**These caps are lower than the stack can actually take** — deliberately, to fail early and
+legibly rather than near the real ceiling. The practical cost is that a genuinely deep recursive
+program is rejected: `fact(150)` with its single input exceeds the 128 limit even though the stack
+would handle it. Rewrite such cases as a loop, or raise the `256` numerator and the
+`totalDepthLimit` constant in `Interpreter.swift` — they are one-line changes and the only two
+places the policy lives.
 
 ### 5.7 `if` / `elseif` / `else`
 
@@ -441,10 +490,24 @@ for i : start to end step increment { ... }
 ```
 
 `step` is optional and defaults to `1`. Unlike everything else in the language, the loop bounds are
-**truncated to `Int`** (`Int(startValDouble)`, etc.) once, before the loop starts — the loop
-variable itself is a whole-number `Double` counting up/down by `Int(step)` each iteration. A step of
-`0` throws `Runtime error: Step value cannot be zero`. A positive step counts up while
-`i <= end`; a negative step counts down while `i >= end`.
+**truncated toward zero to `Int`** once, before the loop starts — the loop variable itself is a
+whole-number `Double` counting up/down by `Int(step)` each iteration. A step of `0` throws
+`Runtime error: Step value cannot be zero`. A positive step counts up while `i <= end`; a negative
+step counts down while `i >= end`.
+
+A bound that no `Int` can represent — `nan`, `±inf`, or a magnitude past `Int.max` — throws
+`Runtime error: Loop <start|end|step> out of range: <value>`. This matters because such bounds
+arrive from ordinary arithmetic rather than exotic input: `for i : 1 to sqrt(0-1)` (`nan`),
+`to 1/0` (`inf`), and `to pow(10,400)` (overflows to `inf`) are all reachable in a page of normal
+code. The `nan` step case is reported as out of range rather than as a zero step, since it never
+reaches the zero check.
+
+**Implementation note:** the conversion is `Int(exactly: value.rounded(.towardZero))`, not a bare
+`Int(value)`. The bare form *traps* on those three cases, and a Swift trap is not a catchable
+`Error` — it bypasses `runProgram`'s `do`/`catch` and takes the app down with an empty console,
+the same failure mode the built-in arity gap had ([§5.6](#56-function-calls)). `Int(exactly:)`
+returns `nil` for exactly the untranslatable values (including the `Double(Int.max)` edge, which is
+really `Int.max + 1`) while leaving truncation of ordinary values unchanged.
 
 ### 5.10 Print
 
@@ -646,7 +709,9 @@ the bare call doesn't immediately follow an unterminated item list.
 
 ## 9. Built-in functions and constants
 
-All built-ins operate on and return `Double`; none accept string-literal arguments.
+All built-ins operate on and return `Double`; none accept string-literal arguments. The argument
+counts below are enforced: supplying fewer throws `wrongArgCount`, supplying more warns and drops
+the surplus, exactly as for user functions ([§5.6](#56-function-calls)).
 
 | Function | Signature | Notes |
 |---|---|---|
@@ -705,17 +770,35 @@ Parsing stops at the first error (`parser.parseError`); nothing runs.
 
 - `Error: Undefined variable '<v>'`
 - `Error: Unknown function '<f>'`
-- `Error: Function '<f>' expects <n> arguments, got <m>'` — user functions only; see
-  [§5.6](#56-function-calls) for the equivalent (unchecked) built-in gap.
+- `Error: Function '<f>' expects <n> arguments, got <m>'` — too few arguments supplied, for both
+  user functions and built-ins; see [§5.6](#56-function-calls).
 - `Error: Function '<f>' argument <n> must be a number, got '<literal>'` — built-ins rejecting a
   string-literal argument.
 - `Runtime error: <message>` — catch-all (e.g. `No main() function defined`, `Function '<name>'
-  already defined`, `Step value cannot be zero`, `Unsupported operator`).
+  already defined`, `Step value cannot be zero`, `Loop <start|end|step> out of range: <value>`,
+  `Recursion too deep in '<name>' (limit <n>)`, `Call stack too deep (limit 1024)`,
+  `Unsupported operator`).
 
 `runProgram` catches everything and writes the description through the `output` callback, so the UI
-always shows *something* rather than crashing the app on a bad program — except for the unchecked
-built-in argument-count gap noted in [§9](#9-built-in-functions-and-constants) / [§11](#11-known-limitations--maintainer-notes),
-which is a genuine Swift array-bounds crash, not a caught `Error`.
+always shows *something* rather than crashing the app on a bad program.
+
+**The exceptions to watch for are failures that are not `Error`s at all** — they do not unwind,
+cannot be caught, and so bypass this `do`/`catch` entirely, killing the app with a blank console
+instead of a message. Two kinds, all known instances now fixed:
+
+- **Traps**, from an operation Swift defines as a fatal error rather than a throw: an
+  under-supplied built-in indexing `args[0]` ([§5.6](#56-function-calls)), and a `nan`/`inf`
+  for-loop bound converted with `Int(...)` ([§5.9](#59-for)). Worth naming as a class because it
+  is invisible in review — the trapping operations look like ordinary Swift. The three to watch
+  when extending the interpreter are **array subscripting**, **`Int(someDouble)`**, and
+  **force-unwrapping**; each needs a guard that throws an `EvalError`, since none will throw one
+  on its own.
+- **Native stack exhaustion** (`SIGSEGV`) from unbounded recursion, which no local guard can
+  catch — it is bounded instead by counting frames, see
+  [§5.6.1](#561-recursion-depth-limits).
+
+The shared lesson: anything that can terminate the process rather than raise an `EvalError` has to
+be prevented *before* it happens, because there is no layer above `runProgram` that can report it.
 
 ### 10.4 Non-fatal warnings (also via `output`, so they reach the on-screen console)
 
@@ -726,8 +809,9 @@ which is a genuine Swift array-bounds crash, not a caught `Error`.
   See [§5.3](#53-multi-assign--the-way-to-consume-more-than-one-return-value) and
   [§7.2](#72-return--multi-assign-arity-is-almost-entirely-unchecked).
 - `Warning: '<name>' extra args provided - ignoring` — a call supplied more arguments than the
-  function declares; the surplus is dropped and the call proceeds. Printed once per offending
-  call, so a call inside a loop warns on each iteration. See [§5.6](#56-function-calls).
+  function (user-defined or built-in) takes; the surplus is dropped and the call proceeds. Printed
+  once per offending call, so a call inside a loop warns on each iteration. See
+  [§5.6](#56-function-calls).
 
 Kept deliberately terse (one line, no multi-clause sentences) since the console renders on a narrow
 mobile width and wraps long messages across several lines.
@@ -746,9 +830,31 @@ knowing before you extend it — some are fine as documented quirks, some are wo
 1. **A print/return item list swallows an immediately-following bare call statement** —
    `looksLikeNewStatement` doesn't recognize `identifier(` as the start of a new statement, only
    assignment shapes. See [§8](#8-statement-boundaries--why-there-are-no-semicolons).
-2. **Built-in functions don't check argument count.** `args[0]`/`args[1]` are accessed unchecked;
-   calling `sqrt()` with zero arguments crashes the interpreter (Swift array out-of-bounds) rather
-   than throwing a catchable `EvalError`.
+2. ~~**Built-in functions don't check argument count.**~~ **Fixed**, along with a second instance of
+   the same underlying hazard found while auditing for it:
+   - Each built-in now carries its arity, and under-supply throws `wrongArgCount` like any other
+     error — `sqrt()` reports `expects 1 arguments, got 0` instead of trapping on `args[0]`.
+     See [§5.6](#56-function-calls).
+   - `for` loop bounds convert via `Int(exactly:)`, so a `nan`/`inf`/out-of-range bound throws
+     `Loop <role> out of range` instead of trapping on `Int(someDouble)`. Reachable from plain
+     arithmetic: `for i : 1 to sqrt(0-1)`. See [§5.9](#59-for).
+
+   Both were **traps, not throws** — uncatchable, so they bypassed `runProgram`'s `do`/`catch` and
+   killed the app with an empty console rather than printing an error. See
+   [§10.3](#103-runtime-errors-evalerror-shown-as-error---runtime-error-) for the general class and
+   what to watch for when extending the interpreter.
+
+   Audited and confirmed *not* affected: the 16 built-in closures themselves are total on `Double`
+   input — `sqrt(0-1)`, `log(0)`, `asin(2)`, `1/0`, `5 % 0` all yield `nan`/`inf` rather than
+   trapping, since Swift's floating-point arithmetic has no trapping cases here. There are no
+   force-unwraps or other raw array subscripts in `Interpreter`/`Parser`/`Lexer`.
+
+10. **Recursion is capped well below what the stack could take** — `256 / (inputs + 1)` per
+    function and 1024 frames overall, so `fact(150)` is rejected despite being runnable. This is
+    the deliberate cost of bounding it at all: unbounded recursion exhausts the native stack as a
+    `SIGSEGV`, which is uncatchable and killed the app outright. Both numbers are one-line changes
+    in `Interpreter.swift` if the ceiling proves too tight in practice. See
+    [§5.6.1](#561-recursion-depth-limits).
 3. **`globalSymbols` is dead code.** It's consulted on every variable/constant lookup but nothing
    in the interpreter ever writes to it — there is currently no actual mechanism for true global
    variables shared across function calls.
@@ -769,11 +875,11 @@ knowing before you extend it — some are fine as documented quirks, some are wo
    work" cosmetically).
 8. **Unary minus binds tighter than `^` on the base side** — `-2^2 == 4`, not the `-4` you'd get in
    Python/JS. See [§4.1](#41-unary-minus-vs---a-real-gotcha).
-9. **User functions still accept too many arguments** — surplus arguments are evaluated and
-   dropped rather than rejected. This is no longer *silent* (it warns, see
+9. **Calls still accept too many arguments** — surplus arguments are evaluated and dropped rather
+   than rejected, for built-ins as well as user functions. This is no longer *silent* (it warns, see
    [§5.6](#56-function-calls)), and is kept permissive on purpose so existing programs keep
-   running; promoting it to a hard `wrongArgCount` remains a one-line change in
-   `executeFunction` if that is ever wanted.
+   running; promoting it to a hard `wrongArgCount` is a one-line change in each of the two places
+   that warn (`executeFunction` and the builtin branch of `evaluate`) if that is ever wanted.
 
 ---
 
@@ -786,7 +892,7 @@ knowing before you extend it — some are fine as documented quirks, some are wo
 | Evaluate | `Interpreter.swift` | walks the AST, maintains per-call local symbol tables, resolves built-ins vs. user functions, drives all program `output` |
 | UI wiring | `ComputeViewController.swift` | owns the program/console `UITextView`s, invokes `Lexer` → `Parser` → `Interpreter` on Run, wires `Interpreter.output` to the on-screen console, plus save/load-to-Documents and OCR-scan-to-source features |
 | Test harness | `Tests/harness/main.swift` | command-line driver over the three core files; mirrors `ComputeTapped`'s order (lex → check `lexError` → parse → check `parseError` → run) so the suite tests what the app actually does |
-| Regression suite | `Tests/regression.sh` | ~70 cases asserting the behavior described in this document; exits non-zero on failure |
+| Regression suite | `Tests/regression.sh` | ~95 cases asserting the behavior described in this document; exits non-zero on failure |
 
 ### 12.1 Running the tests
 

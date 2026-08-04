@@ -48,23 +48,32 @@ class Interpreter {
     var output: (String) -> Void = { text in print(text, terminator: "") }
     private var globalSymbols: [String: Double] = [:]
     private var userFunctions: [String: FunctionDefNode] = [:]
-    private var builtins: [String: ([Double]) -> Double] = [
-        "abs":   { args in fabs(args[0]) },
-        "log":   { args in log(args[0]) },
-        "asin":  { args in asin(args[0]) },
-        "sin":   { args in sin(args[0])  },
-        "acos":  { args in acos(args[0]) },
-        "cos":   { args in cos(args[0])  },
-        "atan":  { args in atan(args[0]) },
-        "tan":   { args in tan(args[0])  },
-        "atan2": { args in atan2(args[0], args[1]) },
-        "pow":   { args in pow(args[0], args[1]) },
-        "max":   { args in max(args[0], args[1]) },
-        "min":   { args in min(args[0], args[1]) },
-        "round": { args in round(args[0]) },
-        "sqrt":  { args in sqrt(args[0]) },
-        "ceil":  { args in ceil(args[0]) },
-        "floor": { args in floor(args[0]) }
+    // Each builtin carries its own arity so the call site can check it before invoking the
+    // closure. The closures index args[0]/args[1] directly, so an under-supplied call used to
+    // trap on an array bound - killing the whole app, since a Swift bounds violation is not a
+    // catchable Swift error and never reached runProgram's do/catch. The arity lives here,
+    // next to the closure that relies on it, so the two cannot drift apart.
+    private struct Builtin {
+        let arity: Int
+        let apply: ([Double]) -> Double
+    }
+    private var builtins: [String: Builtin] = [
+        "abs":   Builtin(arity: 1) { args in fabs(args[0]) },
+        "log":   Builtin(arity: 1) { args in log(args[0]) },
+        "asin":  Builtin(arity: 1) { args in asin(args[0]) },
+        "sin":   Builtin(arity: 1) { args in sin(args[0])  },
+        "acos":  Builtin(arity: 1) { args in acos(args[0]) },
+        "cos":   Builtin(arity: 1) { args in cos(args[0])  },
+        "atan":  Builtin(arity: 1) { args in atan(args[0]) },
+        "tan":   Builtin(arity: 1) { args in tan(args[0])  },
+        "atan2": Builtin(arity: 2) { args in atan2(args[0], args[1]) },
+        "pow":   Builtin(arity: 2) { args in pow(args[0], args[1]) },
+        "max":   Builtin(arity: 2) { args in max(args[0], args[1]) },
+        "min":   Builtin(arity: 2) { args in min(args[0], args[1]) },
+        "round": Builtin(arity: 1) { args in round(args[0]) },
+        "sqrt":  Builtin(arity: 1) { args in sqrt(args[0]) },
+        "ceil":  Builtin(arity: 1) { args in ceil(args[0]) },
+        "floor": Builtin(arity: 1) { args in floor(args[0]) }
     ]
     private let constants: [String: Double] = [
         "pi": Double.pi,
@@ -143,6 +152,28 @@ class Interpreter {
         }
     }
 
+    // How deep each user function is currently nested inside itself. Unbounded recursion
+    // overflows the native stack, which is a SIGSEGV rather than a Swift error - so, like a
+    // trap, it cannot be caught and would kill the app with an empty console. Counting the
+    // frames ourselves turns it into an ordinary EvalError the UI can show.
+    private var callDepth: [String: Int] = [:]
+    private var totalCallDepth = 0
+
+    // Budget per function: 256 / (declared inputs + 1), so wider functions - whose frames
+    // carry more bound locals - get proportionally less room. 0 inputs allows 256 deep,
+    // 1 input 128, 2 inputs 85. Integer division, so the cap is always at least 1.
+    private func recursionLimit(_ def: FunctionDefNode) -> Int {
+        return max(1, 256 / (def.inputs.count + 1))
+    }
+
+    // Backstop for the case the per-function limit cannot see: mutual recursion. In a cycle
+    // f0 -> f1 -> ... -> f0, no single function approaches its own cap, yet the frames still
+    // accumulate - measured, 40 zero-argument functions in a cycle (up to 10,240 frames)
+    // still overflowed the native stack and died with SIGSEGV. This bounds the sum instead.
+    // 1024 sits deliberately between the two: 4x the largest per-function limit, so ordinary
+    // nesting never reaches it, and well under the ~2,500 frames measured as survivable.
+    private static let totalDepthLimit = 1024
+
     private func executeFunction(_ def: FunctionDefNode, args: [Double]) throws -> [Double] {
         if args.count > def.inputs.count {
             // Over-supply stays permissive - the surplus is dropped and the call still runs -
@@ -150,6 +181,26 @@ class Interpreter {
             // is still a hard error, thrown by the binding loop below.
             output("Warning: '\(def.name)' extra args provided - ignoring\n")
         }
+
+        // Depth, not a call tally: this counts frames currently on the stack, so a loop that
+        // calls the same function a thousand times in sequence is unaffected - each call has
+        // returned, and decremented, before the next begins. The defer runs on the throwing
+        // path too, so an error raised deep in a call chain doesn't leave the count stuck high.
+        let limit = recursionLimit(def)
+        let depth = (callDepth[def.name] ?? 0) + 1
+        guard depth <= limit else {
+            throw EvalError.runtime("Recursion too deep in '\(def.name)' (limit \(limit))")
+        }
+        guard totalCallDepth < Interpreter.totalDepthLimit else {
+            throw EvalError.runtime("Call stack too deep (limit \(Interpreter.totalDepthLimit))")
+        }
+        callDepth[def.name] = depth
+        totalCallDepth += 1
+        defer {
+            callDepth[def.name] = depth - 1
+            totalCallDepth -= 1
+        }
+
         var localSymbols: [String: Double] = [:]
         for (i, inputName) in def.inputs.enumerated() {
             if i < args.count {
@@ -181,6 +232,20 @@ class Interpreter {
             }
         }
         return .normal(0.0)
+    }
+
+    // A for loop truncates its bounds to Int (see SHALIMAR_LANGUAGE.md 5.9), but a bare
+    // Int(Double) *traps* rather than throwing on NaN, on either infinity, and on any
+    // magnitude past Int's range - and a trap is not a catchable Swift Error, so it walks
+    // past runProgram's do/catch and kills the app with an empty console. That is reachable
+    // from ordinary arithmetic: "for i : 1 to sqrt(0-1)" or "to 1/0" both produce a bound
+    // no Int can hold. Int(exactly:) on the already-truncated value returns nil for exactly
+    // those cases and preserves toward-zero truncation for everything else.
+    private func loopBound(_ value: Double, _ role: String) throws -> Int {
+        guard let bound = Int(exactly: value.rounded(.towardZero)) else {
+            throw EvalError.runtime("Loop \(role) out of range: \(value)")
+        }
+        return bound
     }
 
     private func evaluate(node: ASTNode, symbols: inout [String: Double]) throws -> EvalControl {
@@ -283,7 +348,16 @@ class Interpreter {
                     let val = try evaluate(node: arg, symbols: &symbols)
                     argVals.append(numericValue(val))
                 }
-                return .normal(builtin(argVals))
+                // Same asymmetry user functions use (see executeFunction): too few arguments
+                // leaves the closure with nothing to read and cannot proceed, too many is
+                // recoverable and only warns.
+                guard argVals.count >= builtin.arity else {
+                    throw EvalError.wrongArgCount(callNode.name, expected: builtin.arity, got: argVals.count)
+                }
+                if argVals.count > builtin.arity {
+                    output("Warning: '\(callNode.name)' extra args provided - ignoring\n")
+                }
+                return .normal(builtin.apply(argVals))
             }
             if let def = userFunctions[callNode.name] {
                 var argVals: [Double] = []
@@ -339,9 +413,9 @@ class Interpreter {
             let endValDouble = numericValue(try evaluate(node: forNode.endExpr, symbols: &symbols))
             let stepValDouble = numericValue(try evaluate(node: forNode.stepExpr, symbols: &symbols))
 
-            var i = Int(startValDouble)
-            let endVal = Int(endValDouble)
-            let stepVal = Int(stepValDouble)
+            var i = try loopBound(startValDouble, "start")
+            let endVal = try loopBound(endValDouble, "end")
+            let stepVal = try loopBound(stepValDouble, "step")
 
             if stepVal > 0 {
                 while i <= endVal {
