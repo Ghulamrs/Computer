@@ -15,6 +15,7 @@ All rights reserved
 -------------------
 ? "is prime" x
 -------------------
+// quadratic
 fun <> = main() {
   a : 1
   b : 2
@@ -30,6 +31,7 @@ fun <> = main() {
      ? "Solution" x1 x2
   }
 }
+// prime
 fun <m,i>= prime(n) {
     i : 2
     m : n%i
@@ -55,7 +57,7 @@ fun <> = main() {
     }
   }
 }
-
+// northvisit
 fun <> = main() {
  hunza:  42000
  minapin: 16000
@@ -64,6 +66,7 @@ fun <> = main() {
  khaplu: 18000
  ? hunza + minapin + chillas + skardu + khaplu
 }
+// quadratic
 fun <> = main() {
   a : 1
   b : 2
