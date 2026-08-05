@@ -27,11 +27,12 @@ extension TokenType: Equatable {
         switch (lhs, rhs) {
         case (.number(let a), .number(let b)): return a == b
         case (.identifier(let a), .identifier(let b)): return a == b
-        // No .stringLiteral case on purpose: nothing compares string tokens with "==". The parser
-        // reaches them only by pattern matching (`case .stringLiteral(let str)` in parseTerm,
-        // `startsTerm`), and match/consume are called exclusively with payload-free cases. Two
-        // string tokens therefore fall to the default and compare *unequal* - if you ever write
-        // `match(.stringLiteral("x"))`, add the case first or it will silently never fire.
+        case (.stringLiteral(let a), .stringLiteral(let b)): return a == b
+        // The three cases above compare their payloads; no code path currently reaches them, since
+        // match/consume are only ever called with payload-free cases and the parser reads numbers,
+        // identifiers and strings by pattern matching instead. They are kept so that equality means
+        // what it says: without them two string tokens would fall to the default and compare
+        // *unequal*, and a future `match(.stringLiteral("x"))` would silently never fire.
 
         // Simple cases without associated values
         case (.plus, .plus), (.minus, .minus), (.multiply, .multiply),
