@@ -1,0 +1,25 @@
+// prime.shm
+fun <> = main() {
+  n : 97
+  f : 0
+  if n % 2 = 0 {
+    f : 2
+  }
+  q : ceil(sqrt(n))
+  for j : 3 to q step 2 {
+    if f = 0 {
+      if n % j = 0 {
+        f : j
+      }
+    }
+  }
+  ? n
+  if f = 0 {
+    ? "is a prime"
+  }
+  else {
+    ? "has factor" f
+  }
+}
+// expected: 97.0
+// expected: is a prime

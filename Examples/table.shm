@@ -1,0 +1,14 @@
+// table.shm
+fun <> = main() {
+  n : 7
+  ? "table of" n
+  for i : 1 to 10 {
+    ?? n
+    ?? "x"
+    ?? i
+    ?? "="
+    ? n*i
+  }
+}
+// expected: table of 7.0
+// expected: 7.0 x 1.0 = 7.0 ... 7.0 x 10.0 = 70.0
