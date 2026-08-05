@@ -58,12 +58,25 @@ extension TokenType: Equatable {
 
 class Token {
     let type: TokenType
-    init(type: TokenType) { self.type = type }
+    // Physical source line the token starts on, 1-based. The language is newline-insensitive
+    // everywhere else - this exists for one rule only: a print command must be the first token
+    // on its line (§5.10), which is not decidable from the token stream alone because the lexer
+    // discards newlines as ordinary whitespace. Defaults to 0 for the virtual `.eof` token that
+    // `Parser.currentToken` manufactures, which belongs to no line.
+    let line: Int
+    init(type: TokenType, line: Int = 0) {
+        self.type = type
+        self.line = line
+    }
 }
 
 class Lexer {
     private let input: String
     private var index: String.Index
+    private var line = 1
+    // Line the token currently being scanned began on. Captured before the token is consumed so
+    // that a multi-line string literal is attributed to its opening quote, not its closing one.
+    private var tokenLine = 1
     // First character the lexer could not handle, if any. Mirrors Parser.parseError:
     // callers check it after tokenize() and stop before parsing, since the token stream
     // is truncated at that point.
@@ -93,21 +106,27 @@ class Lexer {
         return nextIndex < input.endIndex ? input[nextIndex] : nil
     }
     
-    private func advance() { index = input.index(after: index) }
-    
+    private func advance() {
+        if index < input.endIndex, input[index] == "\n" { line += 1 }
+        index = input.index(after: index)
+    }
+
+    private func token(_ type: TokenType) -> Token { Token(type: type, line: tokenLine) }
+
     func tokenize() -> [Token] {
         var tokens: [Token] = []
         while index < input.endIndex {
             let char = input[index]
             if char.isWhitespace { advance(); continue }
+            tokenLine = line
             switch char {
             case "+":
-                if peekNext() == ":" { advance(); tokens.append(Token(type: .plusAssign)) }
-                else { tokens.append(Token(type: .plus)) }
+                if peekNext() == ":" { advance(); tokens.append(token(.plusAssign)) }
+                else { tokens.append(token(.plus)) }
             case "-":
-                if peekNext() == ":" { advance(); tokens.append(Token(type: .minusAssign)) }
-                else { tokens.append(Token(type: .minus)) }
-            case "*": tokens.append(Token(type: .multiply))
+                if peekNext() == ":" { advance(); tokens.append(token(.minusAssign)) }
+                else { tokens.append(token(.minus)) }
+            case "*": tokens.append(token(.multiply))
             case "/":
                 if peekNext() == "/" {
                     // Line comment: "//" through end of line, wherever it starts.
@@ -116,32 +135,43 @@ class Lexer {
                     }
                     continue
                 } else {
-                    tokens.append(Token(type: .divide))
+                    tokens.append(token(.divide))
                 }
-            case "%": tokens.append(Token(type: .modulus))
-            case "^": tokens.append(Token(type: .caret))
-            case ":": tokens.append(Token(type: .assignColon))
-            case "=": tokens.append(Token(type: .equal))
-            case "(": tokens.append(Token(type: .lParen))
-            case ")": tokens.append(Token(type: .rParen))
-            case "{": tokens.append(Token(type: .lBrace))
-            case "}": tokens.append(Token(type: .rBrace))
-            case "?": tokens.append(Token(type: .printLine))
+            case "%": tokens.append(token(.modulus))
+            case "^": tokens.append(token(.caret))
+            case ":": tokens.append(token(.assignColon))
+            case "=": tokens.append(token(.equal))
+            case "(": tokens.append(token(.lParen))
+            case ")": tokens.append(token(.rParen))
+            case "{": tokens.append(token(.lBrace))
+            case "}": tokens.append(token(.rBrace))
+            case "?":
+                // "??" is inline print, "?" is print-with-newline. Longest match first, as with
+                // "+:" / "+" - a lone "?" is only reached once the second "?" is ruled out.
+                if peekNext() == "?" { advance(); tokens.append(token(.printInline)) }
+                else { tokens.append(token(.printLine)) }
             case "!":
-                if peekNext() == "=" { advance(); tokens.append(Token(type: .notEqual)) }
-                else { tokens.append(Token(type: .printInline)) }
-            case "&": tokens.append(Token(type: .and))
-            case "|": tokens.append(Token(type: .or))
-            case "<": tokens.append(Token(type: .lAngle))
-            case ">": tokens.append(Token(type: .rAngle))
-            case ",": tokens.append(Token(type: .comma))
+                if peekNext() == "=" { advance(); tokens.append(token(.notEqual)) }
+                else {
+                    // "!" was the inline-print command before "??" took that role, so this is the
+                    // line every program written against the old spelling lands on. A bare "!" is
+                    // now no token at all; say what to write instead rather than reporting it as
+                    // an anonymous unexpected character.
+                    lexError = "Lex error: line \(tokenLine): '!' is not a command. Use '??' to print inline, '!=' for not-equal."
+                    return tokens
+                }
+            case "&": tokens.append(token(.and))
+            case "|": tokens.append(token(.or))
+            case "<": tokens.append(token(.lAngle))
+            case ">": tokens.append(token(.rAngle))
+            case ",": tokens.append(token(.comma))
             case "\"":
                 var str = ""
                 advance()
                 while index < input.endIndex && input[index] != "\"" {
                     str.append(input[index]); advance()
                 }
-                tokens.append(Token(type: .stringLiteral(str)))
+                tokens.append(token(.stringLiteral(str)))
                 if index < input.endIndex { advance() } // consume closing quote, if the string was actually closed
                 continue
             default:
@@ -150,9 +180,16 @@ class Lexer {
                     while index < input.endIndex && (isDigit(input[index]) || input[index] == ".") {
                         numStr.append(input[index]); advance()
                     }
-                    if let value = Double(numStr) {
-                        tokens.append(Token(type: .number(value)))
+                    // The scanning loop above is deliberately looser than the grammar: it takes any
+                    // run of digits and dots, so "1.2.3" arrives here as one string that Double
+                    // cannot parse. Reporting it is the point - previously the token was simply not
+                    // appended, which desynced the stream and surfaced as a parse error pointing
+                    // somewhere else entirely. Note "1." is not malformed: Double("1.") is 1.0.
+                    guard let value = Double(numStr) else {
+                        lexError = "Lex error: line \(tokenLine): Malformed number '\(numStr)'"
+                        return tokens
                     }
+                    tokens.append(token(.number(value)))
                     continue
                 } else if isIdentifierStart(char) {
                     var idStr = String(char); advance()
@@ -160,16 +197,16 @@ class Lexer {
                         idStr.append(input[index]); advance()
                     }
                     switch idStr.lowercased() {
-                    case "if": tokens.append(Token(type: .ifKeyword))
-                    case "else": tokens.append(Token(type: .elseKeyword))
-                    case "elseif": tokens.append(Token(type: .elseifKeyword))
-                    case "while": tokens.append(Token(type: .whileKeyword))
-                    case "for": tokens.append(Token(type: .forKeyword))
-                    case "to": tokens.append(Token(type: .toKeyword))
-                    case "step": tokens.append(Token(type: .stepKeyword))
-                    case "fun": tokens.append(Token(type: .funKeyword))
-                    case "return": tokens.append(Token(type: .returnKeyword))
-                    default: tokens.append(Token(type: .identifier(idStr)))
+                    case "if": tokens.append(token(.ifKeyword))
+                    case "else": tokens.append(token(.elseKeyword))
+                    case "elseif": tokens.append(token(.elseifKeyword))
+                    case "while": tokens.append(token(.whileKeyword))
+                    case "for": tokens.append(token(.forKeyword))
+                    case "to": tokens.append(token(.toKeyword))
+                    case "step": tokens.append(token(.stepKeyword))
+                    case "fun": tokens.append(token(.funKeyword))
+                    case "return": tokens.append(token(.returnKeyword))
+                    default: tokens.append(token(.identifier(idStr)))
                     }
                     continue
                 }
@@ -180,7 +217,7 @@ class Lexer {
                 // can see it is U+0445 and not U+0078. Previously this fell through to the
                 // advance() below and the character was dropped without a word, which is
                 // what let a mis-scanned "хn" silently become the variable "n".
-                lexError = "Lex error: Unexpected character '\(char)' (\(Lexer.codePoint(of: char)))"
+                lexError = "Lex error: line \(tokenLine): Unexpected character '\(char)' (\(Lexer.codePoint(of: char)))"
                 return tokens
             }
             advance()

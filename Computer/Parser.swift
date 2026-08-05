@@ -11,15 +11,31 @@ enum ParseError: Error, CustomStringConvertible {
     case invalidAssignmentOperator(String)
     case missingOpeningBrace
     case missingClosingBrace
-    
-    var description: String {
+    case printNotAtLineStart(String)
+
+    // The error without its "Parse error: " prefix, so a line number can be inserted between the
+    // two by LocatedParseError rather than spliced into a finished string.
+    var message: String {
         switch self {
-        case .unexpectedToken(let tok): return "Parse error: Unexpected token '\(tok)'"
-        case .invalidAssignmentOperator(let tok): return "Parse error: Invalid assignment operator '\(tok)'. Use ':' instead."
-        case .missingOpeningBrace: return "Parse error: Missing '{' to start block"
-        case .missingClosingBrace: return "Parse error: Missing '}' to close block"
+        case .unexpectedToken(let tok): return "Unexpected token '\(tok)'"
+        case .printNotAtLineStart(let cmd): return "'\(cmd)' must be the first thing on its line"
+        case .invalidAssignmentOperator(let tok): return "Invalid assignment operator '\(tok)'. Use ':' instead."
+        case .missingOpeningBrace: return "Missing '{' to start block"
+        case .missingClosingBrace: return "Missing '}' to close block"
         }
     }
+
+    var description: String { "Parse error: \(message)" }
+}
+
+// A ParseError plus the line it was raised on. Parsing stops at the first error, and `parseProgram`
+// is the one place that records it, so the line is attached there once instead of at each of the
+// ten-odd throw sites - none of which would otherwise need to know a line number exists.
+struct LocatedParseError: Error, CustomStringConvertible {
+    let error: ParseError
+    let line: Int
+
+    var description: String { "Parse error: line \(line): \(error.message)" }
 }
 
 // =======================
@@ -28,64 +44,85 @@ enum ParseError: Error, CustomStringConvertible {
 
 protocol ASTNode {}
 
+// Statements record the source line they begin on; expressions deliberately do not. A runtime
+// error is reported against the statement being executed, which is the granularity the language
+// needs and keeps a line number off every NumberNode. `Interpreter.evaluate` updates its notion of
+// the current line whenever it is handed one of these - see §10.3.
+protocol StatementNode: ASTNode {
+    var line: Int { get }
+}
+
 struct NumberNode: ASTNode { let value: Double }
 struct StringNode: ASTNode { let value: String }
 struct VariableNode: ASTNode { let name: String }
 
-struct AssignmentNode: ASTNode {
+struct AssignmentNode: StatementNode {
     let variable: String
     let expr: ASTNode
+    let line: Int
 }
 
-struct CompoundAssignNode: ASTNode {
+struct CompoundAssignNode: StatementNode {
     enum Op { case plus, minus }
     let variable: String
     let op: Op
     let expr: ASTNode
+    let line: Int
 }
 
-struct MultiAssignNode: ASTNode {
+struct MultiAssignNode: StatementNode {
     let variables: [String]
     let call: FunctionCallNode
+    let line: Int
 }
 
-struct ReturnNode: ASTNode {
+struct ReturnNode: StatementNode {
     let exprs: [ASTNode]
+    let line: Int
 }
 
-struct FunctionDefNode: ASTNode {
+struct FunctionDefNode: StatementNode {
     let name: String
     let inputs: [String]
     let outputs: [String]
     let body: [ASTNode]
+    let line: Int
 }
 
-struct FunctionCallNode: ASTNode {
+// Both an expression and a statement: `f(1)` on its own line is a legal statement (§7.1), so it
+// carries a line like any other - otherwise a bad bare call would be reported against whatever
+// statement happened to run before it.
+struct FunctionCallNode: StatementNode {
     let name: String
     let args: [ASTNode]
+    let line: Int
 }
 
-struct IfElseChainNode: ASTNode {
+struct IfElseChainNode: StatementNode {
     let branches: [(ASTNode, [ASTNode])]
     let elseBranch: [ASTNode]?
+    let line: Int
 }
 
-struct WhileNode: ASTNode {
+struct WhileNode: StatementNode {
     let condition: ASTNode
     let body: [ASTNode]
+    let line: Int
 }
 
-struct ForLoopNode: ASTNode {
+struct ForLoopNode: StatementNode {
     let variable: String
     let startExpr: ASTNode
     let endExpr: ASTNode
     let stepExpr: ASTNode
     let body: [ASTNode]
+    let line: Int
 }
 
-struct PrintNode: ASTNode {
+struct PrintNode: StatementNode {
     let items: [ASTNode]
     let newline: Bool
+    let line: Int
 }
 
 struct BinaryOpNode: ASTNode {
@@ -121,8 +158,10 @@ class Parser {
     //    that guard stop firing and downgrade "Missing '}' to close block" to a generic
     //    unexpected-token error.
     private var currentToken: Token {
+        // The synthetic eof borrows the last real token's line so an end-of-input error ("Missing
+        // '}' to close block") is reported against the end of the program rather than line 0.
         return currentIndex < tokens.count ? tokens[currentIndex]
-                                           : Token(type: .eof)
+                                           : Token(type: .eof, line: tokens.last?.line ?? 1)
     }
 
     private func advance() {
@@ -159,11 +198,17 @@ class Parser {
         while currentIndex < tokens.count {
             do {
                 nodes.append(try parseExpression())
-            } catch {
+            } catch let error as ParseError {
                 // Must be recorded, not just printed: ComputeViewController checks
                 // parser.parseError to decide whether to show the error and stop. A bare
                 // print() only reaches Xcode's console, leaving the app to run a truncated
                 // AST and report a misleading "No main() function defined" instead.
+                //
+                // `currentIndex` still sits on the token that failed - throwing unwinds without
+                // advancing - so the current token's line is the line to report.
+                parseError = LocatedParseError(error: error, line: currentToken.line)
+                break
+            } catch {
                 parseError = error
                 break
             }
@@ -176,6 +221,9 @@ class Parser {
     }
 
     func parseStatement() throws -> ASTNode {
+        // Captured before anything is consumed, so every statement is attributed to the line it
+        // opens on rather than the line its last token happens to fall on.
+        let line = currentToken.line
         switch currentToken.type {
         case .identifier(let name):
             advance()
@@ -183,15 +231,15 @@ class Parser {
             case .assignColon:
                 _ = try consume(.assignColon)
                 let expr = try parseExpr()
-                return AssignmentNode(variable: name, expr: expr)
+                return AssignmentNode(variable: name, expr: expr, line: line)
             case .plusAssign:
                 _ = try consume(.plusAssign)
                 let expr = try parseExpr()
-                return CompoundAssignNode(variable: name, op: .plus, expr: expr)
+                return CompoundAssignNode(variable: name, op: .plus, expr: expr, line: line)
             case .minusAssign:
                 _ = try consume(.minusAssign)
                 let expr = try parseExpr()
-                return CompoundAssignNode(variable: name, op: .minus, expr: expr)
+                return CompoundAssignNode(variable: name, op: .minus, expr: expr, line: line)
             case .equal:
                 // Fallback assignment, per SHALIMAR_LANGUAGE.md §2.5. Deliberately a bare
                 // print() and not `output`, so this warning reaches Xcode's console only -
@@ -199,7 +247,7 @@ class Parser {
                 print("Warning: '=' used for assignment. Use ':' instead.")
                 _ = try consume(.equal)
                 let expr = try parseExpr()
-                return AssignmentNode(variable: name, expr: expr)
+                return AssignmentNode(variable: name, expr: expr, line: line)
             default:
                 // Not an assignment of any kind, so this identifier begins an expression
                 // statement - most importantly a bare call like `f(4)`, which §7.1 requires
@@ -227,7 +275,7 @@ class Parser {
                 _ = try consume(.assignColon)
                 let fname = try consumeIdentifier()
                 let call = try parseFunctionCall(name: fname)
-                return MultiAssignNode(variables: vars, call: call)
+                return MultiAssignNode(variables: vars, call: call, line: line)
             }
             throw ParseError.unexpectedToken("Unexpected '<'")
 
@@ -244,14 +292,16 @@ class Parser {
                   !looksLikeNewStatement(at: currentIndex) {
                 exprs.append(try parseExpr())
             }
-            return ReturnNode(exprs: exprs)
+            return ReturnNode(exprs: exprs, line: line)
 
         case .printLine:
+            try requireLineStart("?")
             _ = try consume(.printLine)
-            return try parsePrint(newline: true)
+            return try parsePrint(newline: true, line: line)
         case .printInline:
+            try requireLineStart("??")
             _ = try consume(.printInline)
-            return try parsePrint(newline: false)
+            return try parsePrint(newline: false, line: line)
 
         case .ifKeyword:
             return try parseIfElseChain()
@@ -281,6 +331,7 @@ class Parser {
     }
     
     func parseIfElseChain() throws -> ASTNode {
+        let line = currentToken.line
         _ = try consume(.ifKeyword)
         let cond = try parseExpr()
         let body = try parseBlock()
@@ -296,17 +347,19 @@ class Parser {
         if match(.elseKeyword) {
             elseBranch = try parseBlock()
         }
-        return IfElseChainNode(branches: branches, elseBranch: elseBranch)
+        return IfElseChainNode(branches: branches, elseBranch: elseBranch, line: line)
     }
 
     func parseWhile() throws -> ASTNode {
+        let line = currentToken.line
         _ = try consume(.whileKeyword)
         let cond = try parseExpr()
         let body = try parseBlock()
-        return WhileNode(condition: cond, body: body)
+        return WhileNode(condition: cond, body: body, line: line)
     }
 
     func parseForLoop() throws -> ASTNode {
+        let line = currentToken.line
         _ = try consume(.forKeyword)
         let varName = try consumeIdentifier()
         _ = try consume(.assignColon)
@@ -324,10 +377,12 @@ class Parser {
                            startExpr: startExpr,
                            endExpr:   endExpr,
                            stepExpr:  stepExpr,
-                           body:      body)
+                           body:      body,
+                           line:      line)
     }
-    
+
     func parseFunctionDef() throws -> ASTNode {
+        let line = currentToken.line
         _ = try consume(.funKeyword)
 
         var outputs: [String] = []
@@ -365,17 +420,18 @@ class Parser {
         _ = try consume(.rParen)
 
         let body = try parseBlock()
-        return FunctionDefNode(name: name, inputs: inputs, outputs: outputs, body: body)
+        return FunctionDefNode(name: name, inputs: inputs, outputs: outputs, body: body, line: line)
     }
 
-    func parsePrint(newline: Bool) throws -> ASTNode {
+    // `line` is the print command's own line, passed in because the caller has already consumed it.
+    func parsePrint(newline: Bool, line: Int) throws -> ASTNode {
         var items: [ASTNode] = []
         while currentIndex < tokens.count,
               startsTerm(currentToken.type),
               !looksLikeNewStatement(at: currentIndex) {
             items.append(try parseExpr())
         }
-        return PrintNode(items: items, newline: newline)
+        return PrintNode(items: items, newline: newline, line: line)
     }
     
     func parseTerm() throws -> ASTNode {
@@ -525,6 +581,30 @@ class Parser {
     // item in a no-separator Expression list (PrintItems, ReturnStmt's exprs).
     // Without this, "? x" immediately followed by "x -: 1" would greedily eat
     // that second "x" as another print item, desyncing the rest of the parse.
+    // A print command must open its own line (§5.10). This is the only rule in the language that
+    // consults source layout at all - everywhere else newlines are plain whitespace - so it is the
+    // only reason `Token` carries a line number.
+    //
+    // It is also what makes "one print command per line" enforceable. `? x ?? y` parses as two
+    // statements, exactly as it would on two lines, because `?`/`??` cannot begin a print *item*
+    // and so end the first item list; without this check the two forms are indistinguishable and
+    // both run. Here the second command fails, since a token preceded on the same line by another
+    // token does not start that line.
+    private func requireLineStart(_ command: String) throws {
+        guard startsLine(at: currentIndex) else {
+            throw ParseError.printNotAtLineStart(command)
+        }
+    }
+
+    // The first token of the program starts a line by definition; any other token does so only if
+    // the token before it belongs to an earlier line. Leading indentation is irrelevant - the lexer
+    // has already dropped it, which is what makes an indented `? x` inside a block legal.
+    private func startsLine(at index: Int) -> Bool {
+        guard index < tokens.count else { return false }
+        guard index > 0 else { return true }
+        return tokens[index - 1].line < tokens[index].line
+    }
+
     private func looksLikeNewStatement(at start: Int) -> Bool {
         if start < tokens.count, case .identifier = tokens[start].type, start + 1 < tokens.count {
             switch tokens[start + 1].type {
@@ -552,10 +632,13 @@ class Parser {
     // --- FunctionCall ::= Identifier "(" [ Expression { "," Expression } ] ")" ---
     // `name` has already been consumed by the caller; position is expected at "(".
     func parseFunctionCall(name: String) throws -> FunctionCallNode {
+        // The "(" line, not the identifier's - the identifier is already consumed, and the two are
+        // on the same line in anything but pathological formatting.
+        let line = currentToken.line
         _ = try consume(.lParen)
         var args: [ASTNode] = []
         if match(.rParen) {
-            return FunctionCallNode(name: name, args: args)
+            return FunctionCallNode(name: name, args: args, line: line)
         }
         while true {
             args.append(try parseExpr())
@@ -563,6 +646,6 @@ class Parser {
             break
         }
         _ = try consume(.rParen)
-        return FunctionCallNode(name: name, args: args)
+        return FunctionCallNode(name: name, args: args, line: line)
     }
 }

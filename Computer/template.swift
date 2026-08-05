@@ -47,8 +47,12 @@ fun <m,i>= prime(n) {
 fun <> = main() {
   for j:9 to 100 step 2 {
     <d,k> : prime(j)
-    if d = 0 { ? j "has factor" k }
-    else { ? j "is a prime" }
+    if d = 0 {
+      ? j "has factor" k
+    }
+    else {
+      ? j "is a prime"
+    }
   }
 }
 

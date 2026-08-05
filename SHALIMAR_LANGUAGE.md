@@ -22,10 +22,13 @@ them.
 - Control flow: `if`/`elseif`/`else`, `while`, `for ... to ... step ...`.
 - Functions can return **multiple** values; the caller captures them with the multi-assign
   syntax `<a,b> : f(...)`.
-- Output goes through `?` (print with newline) or `!` (print without newline).
-- Statements have no terminator (no `;`, newlines are not significant) — the parser instead uses
-  targeted lookahead to know where one statement ends and the next begins. See
-  [§8](#8-statement-boundaries--why-there-are-no-semicolons).
+- Output goes through `?` (print with newline) or `??` (print without newline). Each must be the
+  first thing on its line, so there is at most one print command per line. See
+  [§5.10](#510-print).
+- Statements have no terminator (no `;`) — the parser instead uses targeted lookahead to know where
+  one statement ends and the next begins. See
+  [§8](#8-statement-boundaries--why-there-are-no-semicolons). Newlines are insignificant
+  *everywhere except* the print rule above, which is the one place layout carries meaning.
 
 ### 1.1 A complete example
 
@@ -51,7 +54,9 @@ fun <> = main() {
 ## 2. Lexical structure
 
 Source is read left to right; whitespace (including newlines) is skipped and otherwise
-insignificant.
+insignificant. The lexer does, however, count newlines as it discards them and stamps each token
+with the line it started on, because one rule needs it: a print command must be the first token on
+its line ([§5.10](#510-print)). Nothing else in the language consults layout.
 
 ### 2.1 Comments
 
@@ -114,13 +119,19 @@ scientific/exponent notation (`1e10` is not supported — `e` is just a letter, 
 number `1` immediately followed by the identifier `e10`, which will then fail to parse as a valid
 continuation).
 
-**Implementation note — silently dropped malformed numbers:** the lexer builds up a run of
-digits/`.` characters and only appends a token if `Double(numStr)` succeeds. A malformed literal
-like `1.2.3` is accepted by the *scanning* loop (it happily consumes `1`, `.`, `2`, `.`, `3` as one
-run) but `Double("1.2.3")` returns `nil`, so **no token at all is emitted** for it — it vanishes
-from the token stream instead of producing a lex error. This desyncs everything after it and
-surfaces as a confusing downstream parse error pointing at the wrong place. If you're debugging a
-mysterious "unexpected token" error, check for a stray extra `.` in a number first.
+**Implementation note — malformed numbers are a lex error:** the lexer's *scanning* loop is looser
+than the grammar above — it consumes any run of digits and `.` characters, so `1.2.3` arrives at the
+conversion step as the single string `"1.2.3"`, which `Double` cannot parse. That now produces
+`Lex error: line <n>: Malformed number '1.2.3'`
+([§10.1](#101-lex-errors-lexerlexerror-shown-as-lex-error-)) and stops tokenizing, exactly like an
+unrecognized character.
+
+Note that a *trailing* dot is not malformed: `Double("1.")` is `1.0`, so `? 1.` prints `1.0` and is
+accepted, even though the grammar above requires at least one digit after the `.`. The grammar is
+the intent; `Double`'s parser is what actually decides, and it is the more permissive of the two.
+
+Previously no token at all was emitted for a malformed run — it vanished from the token stream,
+desyncing everything after it and surfacing as a confusing parse error pointing at the wrong place.
 
 ### 2.4 String literals
 
@@ -152,8 +163,9 @@ identifier predicates. That is the intended split — non-ASCII is a hazard when
 | `(` `)` | grouping / call argument list |
 | `{` `}` | block delimiters |
 | `,` | list separator |
-| `?` | print with trailing newline |
-| `!` | print with no trailing newline (only when *not* immediately followed by `=`) |
+| `?` | print with trailing newline (only when *not* immediately followed by a second `?`) |
+| `??` | print with no trailing newline |
+| `!` | **not a token on its own** — only the first half of `!=`; a bare `!` is a lex error |
 | `"` | string literal delimiter |
 
 **Implementation note — `TokenType.eof` is never emitted.** The enum has an `eof` case, but
@@ -237,8 +249,8 @@ ForStmt       ::= "for" Identifier ":" Expression "to" Expression [ "step" Expre
 
 Block         ::= "{" { Statement } "}"
 
-PrintStmt     ::= "?" PrintItems
-                | "!" PrintItems
+PrintStmt     ::= "?" PrintItems              (* must be first token on its line *)
+                | "??" PrintItems             (* must be first token on its line *)
 PrintItems    ::= Expression { Expression }
 
 Expression    ::= OrExpr
@@ -513,13 +525,60 @@ really `Int.max + 1`) while leaving truncation of ordinary values unchanged.
 
 ```
 ? expr1 expr2 ...      // with trailing newline
-! expr1 expr2 ...      // no trailing newline
+?? expr1 expr2 ...     // no trailing newline
 ```
+
+**A print command must be the first token on its line.** Indentation doesn't count — the lexer has
+already dropped it — so an indented `? x` inside a block is fine. What is rejected is a command with
+any other token before it on the same line:
+
+```
+fun <> = main() {
+  x : 1
+  ? x                  // fine, and indented
+  ?? x                 // fine, its own line
+}
+
+fun <> = main() { x : 1 ? x }     // Parse error: '?' must be the first thing on its line
+? x ?? y                          // Parse error: '??' must be the first thing on its line
+? "hello" ?? x                    // same - the second command is mid-line
+```
+
+One consequence is the rule's real purpose: **at most one print command per line**, since a second
+one necessarily has the first command's items before it. Both errors are raised the same way; there
+is no separate "two commands" diagnostic.
 
 Each item is printed followed by a single space (`"\(v) "` for numbers, `"<literal> "` for string
 literals), then the newline (or not) is appended once at the end. Note this means `?` always leaves
-a trailing space before the newline, and consecutive `!` prints run together with no separator
+a trailing space before the newline, and consecutive `??` prints run together with no separator
 between them beyond each item's own trailing space.
+
+**Interaction with camera scanning.** Line breaks now carry meaning, so the scanner has to
+reproduce them faithfully. Vision returns text regions with bounding boxes — it does not promise one
+region per printed line, in either direction — so `ScanLayout.lines(from:)` reconstructs the lines
+from geometry rather than trusting the order or count of observations:
+
+- **Splits are repaired.** A wide gap in a printed line (`x : 1        ? x`) can come back as two
+  separate regions. Regions whose vertical centres are within half a line height are grouped into
+  one line and ordered left to right. This is the case that matters most: emitting them as two lines
+  would turn a program the scanner should *reject* into one that quietly runs, with nothing on
+  screen to say the scan changed its meaning.
+- **Merges are reported, not repaired.** Two printed lines read as a single region cannot be undone
+  by grouping, and splitting on an interior `?` is not an option — `? x ? y` typed deliberately on
+  one line has to stay the error this section makes it. Instead
+  `ScanLayout.linesWithLateCommand(in:)` finds lines whose `?`/`??` isn't first (ignoring string
+  contents and `//` comments) and the post-scan alert names the first one, while the user is already
+  being asked to check the text. Running it anyway gives the ordinary parse error with its line.
+
+`ScanLayout.swift` has no UIKit or Vision dependency for the same reason the language core doesn't:
+so it can be tested from the command line. See `Tests/scanlayout/main.swift`.
+
+**Implementation note — why this needs `Token.line`.** Newlines are whitespace to the lexer, so
+`? x ?? y` and the same two commands on two lines produce *identical* token streams: `??` cannot
+begin a print item, so it ends the first item list and starts a second statement either way. Nothing
+in the token sequence distinguishes them. Enforcing the rule therefore required tokens to remember
+their source line — `Token.line`, set in `Lexer` and read only by `Parser.startsLine(at:)`. It is
+the sole piece of source layout the language preserves.
 
 Only **literal** string arguments are printed as text; anything else (numbers, variables,
 expressions, function calls) is evaluated and printed via Swift's default `Double` string
@@ -668,8 +727,11 @@ under a two-name declaration with zero complaint).
 
 ## 8. Statement boundaries — why there are no semicolons
 
-Statements are separated purely by grammar shape and targeted lookahead, never by punctuation or
-newlines. Two heuristics do the real work, both in `Parser.swift`:
+Statements are separated purely by grammar shape and targeted lookahead, never by punctuation.
+Newlines don't separate them either — with one exception that is a *restriction* rather than a
+separator: a print command must open its line ([§5.10](#510-print)), so a print statement can never
+be the second thing on one. Everything below concerns where a statement ends, which remains a
+question of shape alone. Two heuristics do the real work, both in `Parser.swift`:
 
 - `looksLikeMultiAssignHeader(at:)` — distinguishes `<` starting a fresh `<a,b> : f(...)` statement
   from `<` as a less-than comparison operator, by peeking ahead for the exact shape
@@ -738,23 +800,56 @@ constants[name]`), so a local variable named `pi` or `e` shadows the constant.
 
 ## 10. Diagnostics
 
-### 10.1 Lex errors (`Lexer.lexError`, shown as `Lex error: ...`)
+**Every error names the line it happened on**, inserted between the prefix and the text:
 
-- `Lex error: Unexpected character '<c>' (U+XXXX)` — the character is not punctuation the language
+```
+Lex error: line 3: Unexpected character 'х' (U+0445)
+Parse error: line 7: '?' must be the first thing on its line
+Error: line 12: Undefined variable 'zz'
+Runtime error: line 4: Loop end out of range: nan
+```
+
+The message bodies listed below are written without that prefix; each is preceded by
+`<kind>: line <n>: ` in real output. The one exception is an error raised when no statement is
+executing — `No main() function defined` — which has no line to name and prints without one rather
+than claiming line 0. Where each kind gets its line from differs, and is worth knowing when a number
+looks off:
+
+| Kind | Line reported | Source |
+|---|---|---|
+| Lex | where the offending character is | `Lexer.tokenLine`, counted as newlines are discarded |
+| Parse | the token the parser choked on | `currentToken.line` at the single point that records `parseError` |
+| Runtime | the **statement** that was executing, not the expression | `Interpreter.currentLine`, updated in `evaluate` from any `StatementNode` |
+
+Runtime granularity is deliberately per-statement: expression nodes carry no line, so an error
+inside a long expression is reported against the statement containing it. Inside a called function
+the callee's own lines take over, so a failure two calls deep names the line that actually failed,
+not the call site.
+
+### 10.1 Lex errors (`Lexer.lexError`, shown as `Lex error: line <n>: ...`)
+
+- `Unexpected character '<c>' (U+XXXX)` — the character is not punctuation the language
   recognizes, not an ASCII digit, and not an ASCII identifier character. The code point is included
   because the usual cause is a homoglyph (`х` U+0445 for `x` U+0078), where the message would be
   unreadable without it. See [§2.2](#22-identifiers).
+- `Malformed number '<run>'` — a run of digits and `.` characters that `Double` cannot
+  parse, i.e. one with more than one `.` in it (`1.2.3`). A trailing dot is *not* malformed. See
+  [§2.3](#23-numbers).
+- `'!' is not a command. Use '??' to print inline, '!=' for not-equal.` — a `!` not
+  followed by `=`. `!` was the inline-print command before `??` replaced it, so every program
+  written against the older spelling lands here; the message names the replacement rather than
+  reporting an anonymous unexpected character. See [§5.10](#510-print).
 
 `tokenize()` stops at the first offending character and returns the tokens collected so far, so the
 token stream is deliberately truncated. **Callers must check `lexer.lexError` before parsing** — a
 parse error raised from a truncated stream points at the wrong place. `ComputeViewController` checks
 it immediately after `tokenize()` and returns.
 
-Unlike `Parser.parseError`, this is the lexer's *only* error case: everything else it cannot make
-sense of is still dropped silently (see [§2.3](#23-numbers) for malformed numbers, and
-[§11](#11-known-limitations--maintainer-notes) item 4).
+These three are the lexer's only error cases; everything else it accepts. The one remaining thing it
+cannot make sense of but does not report is an unterminated string literal, which is deliberately
+tolerated rather than dropped (see [§2.4](#24-string-literals)).
 
-### 10.2 Parse errors (`ParseError`, shown as `Parse error: ...`)
+### 10.2 Parse errors (`ParseError`, shown as `Parse error: line <n>: ...`)
 
 - `Unexpected token '<TokenType>'` — the parser hit a token it had no rule for at that position.
   (After a fix in this session, this prints the token's *type* (e.g. `lParen`), not a raw dump of
@@ -763,21 +858,23 @@ sense of is still dropped silently (see [§2.3](#23-numbers) for malformed numbe
 - `Invalid assignment operator '<tok>'. Use ':' instead.` — currently unused by any code path (no
   call site constructs this case), reserved for future stricter assignment-operator checking.
 - `Missing '{' to start block` / `Missing '}' to close block`.
+- `'<?|??>' must be the first thing on its line` — a print command with another token before it on
+  the same line, which also covers a second print command on a line already carrying one. See
+  [§5.10](#510-print).
 
 Parsing stops at the first error (`parser.parseError`); nothing runs.
 
-### 10.3 Runtime errors (`EvalError`, shown as `Error: ...` / `Runtime error: ...`)
+### 10.3 Runtime errors (`EvalError`, shown as `Error: line <n>: ...` / `Runtime error: line <n>: ...`)
 
-- `Error: Undefined variable '<v>'`
-- `Error: Unknown function '<f>'`
-- `Error: Function '<f>' expects <n> arguments, got <m>'` — too few arguments supplied, for both
+- `Undefined variable '<v>'`
+- `Unknown function '<f>'`
+- `Function '<f>' expects <n> arguments, got <m>'` — too few arguments supplied, for both
   user functions and built-ins; see [§5.6](#56-function-calls).
-- `Error: Function '<f>' argument <n> must be a number, got '<literal>'` — built-ins rejecting a
+- `Function '<f>' argument <n> must be a number, got '<literal>'` — built-ins rejecting a
   string-literal argument.
-- `Runtime error: <message>` — catch-all (e.g. `No main() function defined`, `Function '<name>'
+- `<message>` (shown with the `Runtime error` prefix) — catch-all (e.g. `No main() function defined`, `Function '<name>'
   already defined`, `Step value cannot be zero`, `Loop <start|end|step> out of range: <value>`,
-  `Recursion too deep in '<name>' (limit <n>)`, `Call stack too deep (limit 1024)`,
-  `Unsupported operator`).
+  `Recursion too deep in '<name>' (limit <n>)`, `Call stack too deep (limit 1024)`).
 
 `runProgram` catches everything and writes the description through the `output` callback, so the UI
 always shows *something* rather than crashing the app on a bad program.
@@ -858,11 +955,12 @@ knowing before you extend it — some are fine as documented quirks, some are wo
 3. **`globalSymbols` is dead code.** It's consulted on every variable/constant lookup but nothing
    in the interpreter ever writes to it — there is currently no actual mechanism for true global
    variables shared across function calls.
-4. **Malformed numeric literals are silently dropped**, not reported as a lex error — see
-   [§2.3](#23-numbers). Note the asymmetry with an *unrecognized* character, which since the
-   ASCII-identifier change does produce a proper `Lex error` ([§10.1](#101-lex-errors-lexerlexerror-shown-as-lex-error-)):
-   `1.2.3` still vanishes from the token stream, `х` no longer does. Routing malformed numbers
-   through the same `lexError` channel would be the natural follow-up fix.
+4. ~~**Malformed numeric literals are silently dropped**, not reported as a lex error.~~ **Fixed.**
+   They now go through the same `lexError` channel an unrecognized character does, removing the
+   asymmetry this item described — `1.2.3` reports `Lex error: Malformed number '1.2.3'` instead of
+   vanishing from the token stream and desyncing everything after it. See [§2.3](#23-numbers) and
+   [§10.1](#101-lex-errors-lexerlexerror-shown-as-lex-error-). The lexer now has exactly two error
+   cases and no remaining silent-drop path.
 5. **No scientific notation, no integer type, no arrays/collections, no closures.**
 6. **The `=`-fallback-assignment warning bypasses the app's console.** It's a bare Swift `print(...)`
    call in `Parser.swift`, not routed through `Interpreter.output`, so it only ever appears in Xcode's
@@ -880,6 +978,28 @@ knowing before you extend it — some are fine as documented quirks, some are wo
    [§5.6](#56-function-calls)), and is kept permissive on purpose so existing programs keep
    running; promoting it to a hard `wrongArgCount` is a one-line change in each of the two places
    that warn (`executeFunction` and the builtin branch of `evaluate`) if that is ever wanted.
+11. ~~**`Token.line` exists for exactly one rule, and errors still have no line numbers.**~~
+    **Fixed** — all three kinds of error now name their line ([§10](#10-diagnostics)). Two limits
+    are deliberate and worth knowing:
+    - Runtime lines are **per statement, not per expression**. Only `StatementNode` conformers carry
+      a line, so an error inside a long expression names the statement containing it. Putting a line
+      on every expression node would make the number more precise at the cost of threading it
+      through every node type and construction site.
+    - `Interpreter.currentLine` is a single running value, not a call stack. It names the innermost
+      statement that was executing, which is the useful answer, but there is no traceback showing
+      the chain of calls that got there.
+12. **The `BinaryOpNode.Op` switch in `evaluate` is exhaustive on purpose** — it used to carry a
+    `default: throw EvalError.runtime("Unsupported operator")` arm that the compiler flagged as
+    unreachable (`default will never be executed`), since every case of the enum was already
+    handled. It is gone, which means adding a new operator to `BinaryOpNode.Op` is now a *compile*
+    error in `Interpreter.swift` rather than a runtime error nobody could reach. Don't reintroduce
+    the `default` to silence that build failure — handle the new case.
+13. **A scanned line that Vision merges with its neighbour can only be reported, not recovered.**
+    `ScanLayout` repairs the opposite mistake (one printed line split into several regions) but a
+    merge destroys the boundary before the app sees it. The post-scan alert names the first line
+    whose print command isn't first; splitting it is the user's job. Automatic splitting is
+    deliberately not attempted — it would silently rewrite a program whose one-line print command
+    is a real error. See the scanning notes in [§5.10](#510-print).
 
 ---
 
@@ -887,12 +1007,14 @@ knowing before you extend it — some are fine as documented quirks, some are wo
 
 | Stage | File | Responsibility |
 |---|---|---|
-| Lex | `Lexer.swift` | source `String` → `[Token]` |
-| Parse | `Parser.swift` | `[Token]` → `[ASTNode]` (one node per top-level statement), plus AST node type definitions |
+| Lex | `Lexer.swift` | source `String` → `[Token]`, each stamped with its source line |
+| Parse | `Parser.swift` | `[Token]` → `[ASTNode]` (one node per top-level statement), plus AST node type definitions; statement nodes keep the line they start on (`StatementNode`) |
 | Evaluate | `Interpreter.swift` | walks the AST, maintains per-call local symbol tables, resolves built-ins vs. user functions, drives all program `output` |
 | UI wiring | `ComputeViewController.swift` | owns the program/console `UITextView`s, invokes `Lexer` → `Parser` → `Interpreter` on Run, wires `Interpreter.output` to the on-screen console, plus save/load-to-Documents and OCR-scan-to-source features |
+| Scan layout | `ScanLayout.swift` | OCR text regions → source lines: groups regions into lines by vertical overlap, orders and re-indents them, and flags lines whose print command isn't first ([§5.10](#510-print)). No UIKit/Vision dependency, so it is testable outside the app |
 | Test harness | `Tests/harness/main.swift` | command-line driver over the three core files; mirrors `ComputeTapped`'s order (lex → check `lexError` → parse → check `parseError` → run) so the suite tests what the app actually does |
-| Regression suite | `Tests/regression.sh` | ~95 cases asserting the behavior described in this document; exits non-zero on failure |
+| Regression suite | `Tests/regression.sh` | ~115 language cases asserting the behavior described in this document, plus the scan-layout tests below; exits non-zero on failure |
+| Scan-layout tests | `Tests/scanlayout/main.swift` | 16 cases over `ScanLayout` built from synthetic bounding boxes — ordering, split-line rejoining, indentation, and late-command detection. Compiled and run by `regression.sh` as a second binary, with failures folded into its counts |
 
 ### 12.1 Running the tests
 

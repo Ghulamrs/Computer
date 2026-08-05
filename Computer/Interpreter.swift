@@ -15,16 +15,30 @@ enum EvalError: Error, CustomStringConvertible {
     case wrongArgType(String, position: Int, got: String)
     case runtime(String)
     
-    var description: String {
+    // Split from `description` so a line number can be inserted between the prefix and the text.
+    var prefix: String {
+        if case .runtime = self { return "Runtime error" }
+        return "Error"
+    }
+
+    var message: String {
         switch self {
-        case .undefinedVariable(let v): return "Error: Undefined variable '\(v)'"
-        case .unknownFunction(let f): return "Error: Unknown function '\(f)'"
+        case .undefinedVariable(let v): return "Undefined variable '\(v)'"
+        case .unknownFunction(let f): return "Unknown function '\(f)'"
         case .wrongArgCount(let f, let e, let g):
-            return "Error: Function '\(f)' expects \(e) arguments, got \(g)"
+            return "Function '\(f)' expects \(e) arguments, got \(g)"
         case .wrongArgType(let f, let pos, let got):
-            return "Error: Function '\(f)' argument \(pos) must be a number, got '\(got)'"
-        case .runtime(let msg): return "Runtime error: \(msg)"
+            return "Function '\(f)' argument \(pos) must be a number, got '\(got)'"
+        case .runtime(let msg): return msg
         }
+    }
+
+    var description: String { "\(prefix): \(message)" }
+
+    // Line 0 means "no statement was executing" - `No main() function defined` is the case that
+    // reaches this, and inventing a line for it would be worse than leaving it off.
+    func described(atLine line: Int) -> String {
+        line > 0 ? "\(prefix): line \(line): \(message)" : description
     }
 }
 
@@ -48,6 +62,9 @@ class Interpreter {
     var output: (String) -> Void = { text in print(text, terminator: "") }
     private var globalSymbols: [String: Double] = [:]
     private var userFunctions: [String: FunctionDefNode] = [:]
+    // Source line of the statement currently executing, for error messages. 0 until the first
+    // statement runs. See `evaluate` and `EvalError.described(atLine:)`.
+    private var currentLine = 0
     // Each builtin carries its own arity so the call site can check it before invoking the
     // closure. The closures index args[0]/args[1] directly, so an under-supplied call used to
     // trap on an array bound - killing the whole app, since a Swift bounds violation is not a
@@ -85,6 +102,10 @@ class Interpreter {
             for node in nodes {
                 if let def = node as? FunctionDefNode {
                     guard userFunctions[def.name] == nil else {
+                        // Set explicitly: this runs before any statement executes, so nothing has
+                        // put a line in `currentLine` yet, and the redefinition is the thing to
+                        // point at rather than the original.
+                        currentLine = def.line
                         throw EvalError.runtime("Function '\(def.name)' already defined")
                     }
                     userFunctions[def.name] = def
@@ -98,6 +119,8 @@ class Interpreter {
                 output("Warning: function '\(name)' is defined but never called\n")
             }
             _ = try executeFunction(mainDef, args: [])
+        } catch let error as EvalError {
+            output("\(error.described(atLine: currentLine))\n")
         } catch {
             output("\(error)\n")
         }
@@ -249,6 +272,11 @@ class Interpreter {
     }
 
     private func evaluate(node: ASTNode, symbols: inout [String: Double]) throws -> EvalControl {
+        // Every statement in the program passes through here, so this one line keeps `currentLine`
+        // pointing at whatever is executing - including inside a called function, where the
+        // callee's lines take over until it returns. Expressions leave it alone, which is why an
+        // error inside one is reported against its enclosing statement.
+        if let stmt = node as? StatementNode { currentLine = stmt.line }
         if let numNode = node as? NumberNode { return .normal(numNode.value) }
         // Load-bearing despite looking like a no-op: a StringNode reaching the generic
         // evaluator must degrade to 0.0, per SHALIMAR_LANGUAGE.md §6 ("x : "hello"" makes
@@ -334,7 +362,6 @@ class Interpreter {
             case .greater: return .normal((lv > rv) ? 1.0 : 0.0)
             case .and: return .normal(((lv != 0) && (rv != 0)) ? 1.0 : 0.0)
             case .or: return .normal(((lv != 0) || (rv != 0)) ? 1.0 : 0.0)
-            default: throw EvalError.runtime("Unsupported operator")
             }
         }
         

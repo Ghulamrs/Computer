@@ -219,41 +219,43 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                 do {
                     try handler.perform([request])
 
-                    // Vision doesn't guarantee reading order and strips leading whitespace from
-                    // each line's string, so top-to-bottom order and indentation are rebuilt here
-                    // from each observation's bounding box rather than trusting the raw strings.
-                    let observations = (request.results ?? [])
-                        .sorted { $0.boundingBox.minY > $1.boundingBox.minY }
-                    let lines: [(text: String, minX: CGFloat, width: CGFloat)] = observations.compactMap {
+                    // Vision doesn't guarantee reading order, doesn't promise one observation per
+                    // printed line, and strips leading whitespace from each string. ScanLayout
+                    // rebuilds lines, order and indentation from the bounding boxes - which line a
+                    // piece of text belongs to now changes what the program means, so it cannot be
+                    // left to the order Vision happened to return (see ScanLayout.swift).
+                    let fragments: [ScanLayout.Fragment] = (request.results ?? []).compactMap {
                         guard let text = $0.topCandidates(1).first?.string, !text.isEmpty else { return nil }
-                        return (Self.normalizedToASCII(text), $0.boundingBox.minX, $0.boundingBox.width)
+                        return ScanLayout.Fragment(text: Self.normalizedToASCII(text), box: $0.boundingBox)
                     }
-
-                    if let leftMargin = lines.map(\.minX).min() {
-                        let avgCharWidth = lines
-                            .map { $0.width / CGFloat($0.text.count) }
-                            .reduce(0, +) / CGFloat(lines.count)
-
-                        allLines += lines.map { line -> String in
-                            let indent = avgCharWidth > 0
-                                ? max(0, Int(((line.minX - leftMargin) / avgCharWidth).rounded()))
-                                : 0
-                            return String(repeating: " ", count: indent) + line.text
-                        }
-                    }
+                    allLines += ScanLayout.lines(from: fragments)
                 } catch {
                     print(error)
                 }
             }
 
-            let scannedText = Self.trimToProgramBody(allLines).joined(separator: "\n")
+            let programLines = Self.trimToProgramBody(allLines)
+            let scannedText = programLines.joined(separator: "\n")
+            // A print command that isn't first on its line is a parse error the moment this runs,
+            // and after a scan the likeliest cause is two printed lines read as one. Saying so here,
+            // while the user is already being asked to check the text, beats letting them hit Run
+            // and work backwards from the line number.
+            let lateCommands = ScanLayout.linesWithLateCommand(in: programLines)
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
                 self.program.text = scannedText
+                var message = "Let's review the code before running."
+                if let first = lateCommands.first {
+                    message += "\n\nLine \(first) has a '?' that isn't at the start of the line"
+                    if lateCommands.count > 1 {
+                        message += " (and \(lateCommands.count - 1) more)"
+                    }
+                    message += ". Two lines may have been scanned as one."
+                }
                 let a = UIAlertController(
                             title:   "Scan May Be Incomplete",
-                            message: "Let's review the code before running.",
+                            message: message,
                             preferredStyle: .alert)
                 a.addAction(UIAlertAction(title: "Ok", style: .default, handler: nil))
                 self.present(a, animated: true, completion: nil)
