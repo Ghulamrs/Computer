@@ -970,6 +970,7 @@ e quadratic.shm "roots 2.0000000 3.0000000"
 e table.shm     "7 x 9 = 63"
 e invert.shm    "1.444444  -1.222222  -0.555556"
 e invert.shm    "singular, det 0.0000000"
+e rotations.shm "0.707107   0.707107"
 e rotmat.shm    "yaw 90"
 e rotmat.shm    "1.000000   0.000000   0.000000"
 

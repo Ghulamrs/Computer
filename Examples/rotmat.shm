@@ -48,11 +48,12 @@ fun <> = matmul(a[][]: real, b[][]: real, c[][]: real) {
   }
 }
 
-// Degrees in, radians out. atan2(1,1) is pi/4 exactly, so this needs no literal for
-// pi - the language has no constants and a typed-out 3.14159 would be the least
-// accurate number in the file.
+// Degrees in, radians out. This used to reach atan2(1,1) for pi/4, because the
+// language had no constants and a typed-out 3.14159 would have been the least
+// accurate number in the file. pi is built in now, so the conversion can be
+// written the way it is written everywhere else.
 fun <real> = rad(deg: real) {
-  return deg * atan2(1.0, 1.0) / 45.0
+  return deg * pi / 180.0
 }
 
 fun <> = RotMat(roll: real, pitch: real, yaw: real, R[][]: real) {
