@@ -448,5 +448,11 @@ final class HelpViewController: UIViewController {
     accepted -
     the message names the character and its
     code.
+
+    =============================
+    Shalimar 3.0
+    (c) G. R. Akhtar, Islamabad
+    August 07, 2026
+    =============================
     """
 }

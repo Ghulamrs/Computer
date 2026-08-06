@@ -125,6 +125,30 @@ fun <> = main() {
 t "nested call as argument" "5" 'fun <int> = f(a: int) { return a }
 fun <> = main() {
 ? f(f(5)) }'
+# A scalar may still be passed by reference with '&', which is a copy-in/copy-back:
+# the callee works on its own box and the value is written to the caller's variable
+# when the call returns. Untested until now, and the only feature with no coverage.
+t "& passes a scalar by reference" "6" 'fun <> = bump(&n: int) {
+n : n + 1
+}
+fun <> = main() { x : 5
+bump(x)
+? x }'
+t "& writes back to an element" "1  3  3" 'fun <> = bump(&n: int) {
+n : n + 1
+}
+fun <> = main() { int v[3] : {1,2,3}
+bump(v[1])
+? v }'
+t "& needs a variable, not a value" "needs a variable" 'fun <> = bump(&n: int) {
+n : n + 1
+}
+fun <> = main() {
+bump(1+2) }'
+t "a reference is never converted" "must be int[]" 'fun <> = f(v[]: int) {
+? v }
+fun <> = main() { real A[2] : {1.,2.}
+f(A) }'
 t "scalar arguments are by value" "1" 'fun <int> = f(a: int) { a : 99 return 0 }
 fun <> = main() { x : 1 f(x)
 ? x }'
