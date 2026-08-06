@@ -1,469 +1,709 @@
-//
-//  Interpreter.swift
-//  Computer
-//
-//  Created by G. R. Akhtar on 02/08/2026.
-//  Copyright © 2026 Home. All rights reserved.
-//
-
 import Foundation
 
-enum EvalError: Error, CustomStringConvertible {
-    case undefinedVariable(String)
-    case unknownFunction(String)
-    case wrongArgCount(String, expected: Int, got: Int)
-    case wrongArgType(String, position: Int, got: String)
-    case runtime(String)
-    
-    // Split from `description` so a line number can be inserted between the prefix and the text.
-    var prefix: String {
-        if case .runtime = self { return "Runtime error" }
-        return "Error"
+struct RuntimeError: Error, CustomStringConvertible {
+    let message: String
+    let line: Int
+    var description: String {
+        line > 0 ? "Runtime error: line \(line): \(message)" : "Runtime error: \(message)"
+    }
+}
+
+final class ArrayRef {
+    var elements: [Value]
+    init(_ elements: [Value]) { self.elements = elements }
+}
+
+final class Box {
+    var value: Value
+    init(_ value: Value) { self.value = value }
+}
+
+enum Value {
+    case int(Int32)
+    case real(Double)
+    case char(UInt8)
+    case array(ArrayRef)
+
+    static func zero(of type: ShalimarType, sizes: [Int]) -> Value {
+        switch type {
+        case .int:  return .int(0)
+        case .real: return .real(0)
+        case .char: return .char(0)
+        case .array(let element):
+            let count = sizes.first ?? 0
+            let rest = Array(sizes.dropFirst())
+            return .array(ArrayRef((0..<count).map { _ in Value.zero(of: element, sizes: rest) }))
+        }
     }
 
-    var message: String {
+    var isTruthy: Bool {
         switch self {
-        case .undefinedVariable(let v): return "Undefined variable '\(v)'"
-        case .unknownFunction(let f): return "Unknown function '\(f)'"
-        case .wrongArgCount(let f, let e, let g):
-            return "Function '\(f)' expects \(e) arguments, got \(g)"
-        case .wrongArgType(let f, let pos, let got):
-            return "Function '\(f)' argument \(pos) must be a number, got '\(got)'"
-        case .runtime(let msg): return msg
+        case .int(let v):  return v != 0
+        case .real(let v): return v != 0
+        case .char(let v): return v != 0
+        case .array:       return true
         }
     }
 
-    var description: String { "\(prefix): \(message)" }
-
-    // Line 0 means "no statement was executing" - `No main() function defined` is the case that
-    // reaches this, and inventing a line for it would be worse than leaving it off.
-    func described(atLine line: Int) -> String {
-        line > 0 ? "\(prefix): line \(line): \(message)" : description
-    }
-}
-
-enum EvalControl {
-    case normal(Double)
-    case returnValues([Double])
-}
-
-// Reduces either form of a call's result to a single number by taking the first return
-// value (0 if none) - so "x : f()", "1 + f()", "? f()", etc. all work with a user-defined
-// function the same way they already do with a builtin, instead of silently dropping the
-// value or erroring. Full multi-value capture still requires MultiAssign ("<a,b> : f(...)").
-private func numericValue(_ control: EvalControl) -> Double {
-    switch control {
-    case .normal(let v): return v
-    case .returnValues(let vals): return vals.first ?? 0.0
-    }
-}
-
-class Interpreter {
-    var output: (String) -> Void = { text in print(text, terminator: "") }
-    private var globalSymbols: [String: Double] = [:]
-    private var userFunctions: [String: FunctionDefNode] = [:]
-    // Source line of the statement currently executing, for error messages. 0 until the first
-    // statement runs. See `evaluate` and `EvalError.described(atLine:)`.
-    private var currentLine = 0
-    // Each builtin carries its own arity so the call site can check it before invoking the
-    // closure. The closures index args[0]/args[1] directly, so an under-supplied call used to
-    // trap on an array bound - killing the whole app, since a Swift bounds violation is not a
-    // catchable Swift error and never reached runProgram's do/catch. The arity lives here,
-    // next to the closure that relies on it, so the two cannot drift apart.
-    private struct Builtin {
-        let arity: Int
-        let apply: ([Double]) -> Double
-    }
-    private var builtins: [String: Builtin] = [
-        "abs":   Builtin(arity: 1) { args in fabs(args[0]) },
-        "log":   Builtin(arity: 1) { args in log(args[0]) },
-        "asin":  Builtin(arity: 1) { args in asin(args[0]) },
-        "sin":   Builtin(arity: 1) { args in sin(args[0])  },
-        "acos":  Builtin(arity: 1) { args in acos(args[0]) },
-        "cos":   Builtin(arity: 1) { args in cos(args[0])  },
-        "atan":  Builtin(arity: 1) { args in atan(args[0]) },
-        "tan":   Builtin(arity: 1) { args in tan(args[0])  },
-        "atan2": Builtin(arity: 2) { args in atan2(args[0], args[1]) },
-        "pow":   Builtin(arity: 2) { args in pow(args[0], args[1]) },
-        "max":   Builtin(arity: 2) { args in max(args[0], args[1]) },
-        "min":   Builtin(arity: 2) { args in min(args[0], args[1]) },
-        "round": Builtin(arity: 1) { args in round(args[0]) },
-        "sqrt":  Builtin(arity: 1) { args in sqrt(args[0]) },
-        "ceil":  Builtin(arity: 1) { args in ceil(args[0]) },
-        "floor": Builtin(arity: 1) { args in floor(args[0]) }
-    ]
-    private let constants: [String: Double] = [
-        "pi": Double.pi,
-        "e": M_E
-    ]
-
-    func runProgram(_ nodes: [ASTNode]) {
-        do {
-            for node in nodes {
-                if let def = node as? FunctionDefNode {
-                    guard userFunctions[def.name] == nil else {
-                        // Set explicitly: this runs before any statement executes, so nothing has
-                        // put a line in `currentLine` yet, and the redefinition is the thing to
-                        // point at rather than the original.
-                        currentLine = def.line
-                        throw EvalError.runtime("Function '\(def.name)' already defined")
-                    }
-                    userFunctions[def.name] = def
+    var text: String {
+        switch self {
+        case .int(let v):  return "\(v)"
+        case .real(let v): return Value.fixed(v, places: Value.scalarPlaces)
+        case .char(let v): return v == 0 ? "" : String(UnicodeScalar(v))
+        case .array(let ref):
+            if case .char = ref.elements.first {
+                var bytes: [UInt8] = []
+                for element in ref.elements {
+                    guard case .char(let byte) = element, byte != 0 else { break }
+                    bytes.append(byte)
                 }
+                return String(decoding: bytes, as: UTF8.self)
             }
-            guard let mainDef = userFunctions["main"] else {
-                throw EvalError.runtime("No main() function defined")
-            }
-            let calledNames = collectCalledFunctionNames(nodes)
-            for name in userFunctions.keys.sorted() where name != "main" && !calledNames.contains(name) {
-                output("Warning: function '\(name)' is defined but never called\n")
-            }
-            _ = try executeFunction(mainDef, args: [])
-        } catch let error as EvalError {
-            output("\(error.described(atLine: currentLine))\n")
-        } catch {
-            output("\(error)\n")
+            return "[" + ref.elements.map { $0.text }.joined(separator: ", ") + "]"
+        }
+    }
+}
+
+extension Value {
+    var isCharArray: Bool {
+        guard case .array(let ref) = self, case .char = ref.elements.first else { return false }
+        return true
+    }
+
+    // A real always prints to a fixed number of decimal places rather than through
+    // Swift's shortest-round-trip description, which gives "1.0" one width and
+    // "0.3333333333333333" another - unreadable stacked in a column, and inconsistent
+    // even on its own line. A grid cell gets one place fewer than a scalar: a matrix row
+    // has to fit the screen, and every place spends a character in every column.
+    static let defaultScalarPlaces = 7
+    static let defaultGridPlaces = 6
+
+    // '? prec(n)' overrides both, and a negative argument restores the pair above. These
+    // are static because `text` and `cell` are context-free computed properties reached
+    // from everywhere; Interpreter.run() resets them on entry so one program's setting
+    // cannot leak into the next run in the same process.
+    private(set) static var scalarPlaces = defaultScalarPlaces
+    private(set) static var gridPlaces = defaultGridPlaces
+
+    // prec(n) runs -1 through 24 and clamps to that range at both ends, so -1 is the
+    // reset and no argument is ever refused. 24 is past the ~17 significant digits a
+    // Double actually carries - beyond it the places are fabricated zeros - while still
+    // leaving room to read a tolerance like 1e-20, which is why precision gets raised.
+    static let minPlaces = -1
+    static let maxPlaces = 24
+
+    static func setPlaces(_ requested: Int) {
+        let places = Swift.max(minPlaces, Swift.min(requested, maxPlaces))
+        guard places >= 0 else {
+            scalarPlaces = defaultScalarPlaces
+            gridPlaces = defaultGridPlaces
+            return
+        }
+        scalarPlaces = places
+        gridPlaces = places
+    }
+
+    // Past 1e15 a Double has no significant digits left to land after the point, so
+    // fixed notation would print hundreds of fabricated ones (1e300 renders as 309
+    // characters). Those, and the non-finite values, keep the compact spelling.
+    fileprivate static func fixed(_ v: Double, places: Int) -> String {
+        guard v.isFinite, abs(v) < 1e15 else { return "\(v)" }
+        return String(format: "%.\(places)f", v)
+    }
+
+    fileprivate var cell: String {
+        if case .real(let v) = self { return Value.fixed(v, places: Value.gridPlaces) }
+        return text
+    }
+
+    fileprivate static func rows(of ref: ArrayRef) -> [[String]] {
+        guard case .array = ref.elements.first else {
+            return [ref.elements.map { $0.cell }]
+        }
+        return ref.elements.flatMap { element -> [[String]] in
+            guard case .array(let inner) = element else { return [[element.cell]] }
+            return rows(of: inner)
         }
     }
 
-    // Every FunctionCallNode name referenced anywhere in the program, including
-    // calls made from inside other function bodies — used to flag dead functions.
-    private func collectCalledFunctionNames(_ nodes: [ASTNode]) -> Set<String> {
-        var names: Set<String> = []
-        for node in nodes {
-            collectCalledFunctionNames(node, into: &names)
-        }
-        return names
+    var grid: (text: String, isMultiRow: Bool)? {
+        guard case .array(let ref) = self, !isCharArray else { return nil }
+        let rows = Value.rows(of: ref)
+        let width = rows.flatMap { $0 }.map { $0.count }.max() ?? 0
+        let text = rows.map { row in
+            row.map { String(repeating: " ", count: width - $0.count) + $0 }
+               .joined(separator: "  ")
+        }.joined(separator: "\n")
+        return (text, rows.count > 1)
     }
+}
 
-    private func collectCalledFunctionNames(_ node: ASTNode, into names: inout Set<String>) {
-        switch node {
-        case let n as AssignmentNode:
-            collectCalledFunctionNames(n.expr, into: &names)
-        case let n as CompoundAssignNode:
-            collectCalledFunctionNames(n.expr, into: &names)
-        case let n as MultiAssignNode:
-            collectCalledFunctionNames(n.call, into: &names)
-        case let n as ReturnNode:
-            n.exprs.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as FunctionDefNode:
-            n.body.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as FunctionCallNode:
-            names.insert(n.name)
-            n.args.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as IfElseChainNode:
-            for (cond, body) in n.branches {
-                collectCalledFunctionNames(cond, into: &names)
-                body.forEach { collectCalledFunctionNames($0, into: &names) }
-            }
-            n.elseBranch?.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as WhileNode:
-            collectCalledFunctionNames(n.condition, into: &names)
-            n.body.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as ForLoopNode:
-            collectCalledFunctionNames(n.startExpr, into: &names)
-            collectCalledFunctionNames(n.endExpr, into: &names)
-            collectCalledFunctionNames(n.stepExpr, into: &names)
-            n.body.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as PrintNode:
-            n.items.forEach { collectCalledFunctionNames($0, into: &names) }
-        case let n as BinaryOpNode:
-            collectCalledFunctionNames(n.left, into: &names)
-            collectCalledFunctionNames(n.right, into: &names)
-        default:
-            break // NumberNode, StringNode, VariableNode: leaves, nothing to collect
-        }
-    }
+final class Interpreter {
+    var output: (String) -> Void = { print($0, terminator: "") }
 
-    // How deep each user function is currently nested inside itself. Unbounded recursion
-    // overflows the native stack, which is a SIGSEGV rather than a Swift error - so, like a
-    // trap, it cannot be caught and would kill the app with an empty console. Counting the
-    // frames ourselves turns it into an ordinary EvalError the UI can show.
+    private var prototypes: [String: PrototypeNode] = [:]
+    private var bodies: [String: [StmtNode]] = [:]
+    private var globals: [String: Box] = [:]
+    private var scopes: [[String: Box]] = []
+    private var currentLine = 0
+
     private var callDepth: [String: Int] = [:]
     private var totalCallDepth = 0
-
-    // Budget per function: 256 / (declared inputs + 1), so wider functions - whose frames
-    // carry more bound locals - get proportionally less room. 0 inputs allows 256 deep,
-    // 1 input 128, 2 inputs 85. Integer division, so the cap is always at least 1.
-    private func recursionLimit(_ def: FunctionDefNode) -> Int {
-        return max(1, 256 / (def.inputs.count + 1))
-    }
-
-    // Backstop for the case the per-function limit cannot see: mutual recursion. In a cycle
-    // f0 -> f1 -> ... -> f0, no single function approaches its own cap, yet the frames still
-    // accumulate - measured, 40 zero-argument functions in a cycle (up to 10,240 frames)
-    // still overflowed the native stack and died with SIGSEGV. This bounds the sum instead.
-    // 1024 sits deliberately between the two: 4x the largest per-function limit, so ordinary
-    // nesting never reaches it, and well under the ~2,500 frames measured as survivable.
     private static let totalDepthLimit = 1024
 
-    private func executeFunction(_ def: FunctionDefNode, args: [Double]) throws -> [Double] {
-        if args.count > def.inputs.count {
-            // Over-supply stays permissive - the surplus is dropped and the call still runs -
-            // but silently discarding arguments hides a real mistake, so say so. Under-supply
-            // is still a hard error, thrown by the binding loop below.
-            output("Warning: '\(def.name)' extra args provided - ignoring\n")
-        }
+    private enum Flow {
+        case normal
+        case returned([Value])
+    }
 
-        // Depth, not a call tally: this counts frames currently on the stack, so a loop that
-        // calls the same function a thousand times in sequence is unaffected - each call has
-        // returned, and decremented, before the next begins. The defer runs on the throwing
-        // path too, so an error raised deep in a call chain doesn't leave the count stuck high.
-        let limit = recursionLimit(def)
-        let depth = (callDepth[def.name] ?? 0) + 1
+    func run(_ program: [Node]) {
+        // Precision lives in static storage, so a '? prec(n)' left set by the previous
+        // program in this process must not carry into this one.
+        Value.setPlaces(-1)
+        do {
+            for case let function as FunctionNode in program {
+                prototypes[function.prototype.name] = function.prototype
+                bodies[function.prototype.name] = function.body
+            }
+            for case let declaration as DeclareNode in program {
+                globals[declaration.name] = Box(try initialValue(for: declaration))
+            }
+            guard let main = prototypes["main"] else {
+                throw RuntimeError(message: "No main() function defined", line: 0)
+            }
+            _ = try call(main, arguments: [], line: main.line)
+        } catch let error as RuntimeError {
+            output("\(error)\n")
+        } catch {
+            output("Runtime error: \(error)\n")
+        }
+    }
+
+    private func lookup(_ name: String, _ line: Int) throws -> Box {
+        for scope in scopes.reversed() {
+            if let box = scope[name] { return box }
+        }
+        if let box = globals[name] { return box }
+        throw RuntimeError(message: "Undefined variable '\(name)'", line: line)
+    }
+
+    private func define(_ name: String, _ box: Box) {
+        guard !scopes.isEmpty else { globals[name] = box; return }
+        scopes[scopes.count - 1][name] = box
+    }
+
+    private func existsInScope(_ name: String) -> Bool {
+        scopes.contains { $0[name] != nil } || globals[name] != nil
+    }
+
+    private func call(_ prototype: PrototypeNode, arguments: [Value],
+                      boxes: [Int: Box] = [:], line: Int) throws -> [Value] {
+        let name = prototype.name
+
+        let limit = max(1, 256 / (prototype.inputs.count + 1))
+        let depth = (callDepth[name] ?? 0) + 1
         guard depth <= limit else {
-            throw EvalError.runtime("Recursion too deep in '\(def.name)' (limit \(limit))")
+            throw RuntimeError(message: "Recursion too deep in '\(name)' (limit \(limit))", line: line)
         }
         guard totalCallDepth < Interpreter.totalDepthLimit else {
-            throw EvalError.runtime("Call stack too deep (limit \(Interpreter.totalDepthLimit))")
+            throw RuntimeError(message: "Call stack too deep (limit \(Interpreter.totalDepthLimit))", line: line)
         }
-        callDepth[def.name] = depth
+        callDepth[name] = depth
         totalCallDepth += 1
+
+        let savedScopes = scopes
+        scopes = [[:]]
         defer {
-            callDepth[def.name] = depth - 1
+            scopes = savedScopes
+            callDepth[name] = depth - 1
             totalCallDepth -= 1
         }
 
-        var localSymbols: [String: Double] = [:]
-        for (i, inputName) in def.inputs.enumerated() {
-            if i < args.count {
-                localSymbols[inputName] = args[i]
-            } else {
-                throw EvalError.wrongArgCount(def.name, expected: def.inputs.count, got: args.count)
-            }
+        for (i, parameter) in prototype.inputs.enumerated() where i < arguments.count {
+            scopes[0][parameter.name] = boxes[i] ?? Box(arguments[i])
         }
-        if case .returnValues(let vals) = try executeBlock(def.body, symbols: &localSymbols) {
-            return vals
+
+        guard let body = bodies[name] else {
+            throw RuntimeError(message: "Unknown function '\(name)'", line: line)
         }
-        return def.outputs.map { localSymbols[$0] ?? 0.0 }
-    }
-    
-    // Runs a block's statements in order, stopping and propagating as soon as one of them
-    // returns (including a return nested inside its own if/while/for). Only statement kinds
-    // that can structurally contain/forward an explicit "return" are allowed to end the block
-    // this way - a bare call statement like "f()" also evaluates to .returnValues (so
-    // MultiAssign can capture it elsewhere), but on its own it's just an expression statement
-    // whose value is discarded, not a return.
-    private func executeBlock(_ stmts: [ASTNode], symbols: inout [String: Double]) throws -> EvalControl {
-        for stmt in stmts {
-            let result = try evaluate(node: stmt, symbols: &symbols)
-            switch stmt {
-            case is ReturnNode, is IfElseChainNode, is WhileNode, is ForLoopNode:
-                if case .returnValues = result { return result }
-            default:
-                break
-            }
+        if case .returned(let values) = try execute(body) {
+            return values
         }
-        return .normal(0.0)
+        return []
     }
 
-    // A for loop truncates its bounds to Int (see SHALIMAR_LANGUAGE.md 5.9), but a bare
-    // Int(Double) *traps* rather than throwing on NaN, on either infinity, and on any
-    // magnitude past Int's range - and a trap is not a catchable Swift Error, so it walks
-    // past runProgram's do/catch and kills the app with an empty console. That is reachable
-    // from ordinary arithmetic: "for i : 1 to sqrt(0-1)" or "to 1/0" both produce a bound
-    // no Int can hold. Int(exactly:) on the already-truncated value returns nil for exactly
-    // those cases and preserves toward-zero truncation for everything else.
-    private func loopBound(_ value: Double, _ role: String) throws -> Int {
-        guard let bound = Int(exactly: value.rounded(.towardZero)) else {
-            throw EvalError.runtime("Loop \(role) out of range: \(value)")
+    private func execute(_ statements: [StmtNode]) throws -> Flow {
+        for statement in statements {
+            if case .returned(let values) = try execute(statement) {
+                return .returned(values)
+            }
         }
-        return bound
+        return .normal
     }
 
-    private func evaluate(node: ASTNode, symbols: inout [String: Double]) throws -> EvalControl {
-        // Every statement in the program passes through here, so this one line keeps `currentLine`
-        // pointing at whatever is executing - including inside a called function, where the
-        // callee's lines take over until it returns. Expressions leave it alone, which is why an
-        // error inside one is reported against its enclosing statement.
-        if let stmt = node as? StatementNode { currentLine = stmt.line }
-        if let numNode = node as? NumberNode { return .normal(numNode.value) }
-        // Load-bearing despite looking like a no-op: a StringNode reaching the generic
-        // evaluator must degrade to 0.0, per SHALIMAR_LANGUAGE.md §6 ("x : "hello"" makes
-        // x 0.0). Print items and the builtin-argument check special-case StringNode before
-        // reaching here; every *other* context - assignment, arithmetic, conditions, user
-        // function arguments, return - relies on this line. Without it they all fall through
-        // to the "Unknown node type" throw at the end of this function.
-        if node is StringNode { return .normal(0.0) }
-        if let varNode = node as? VariableNode {
-            guard let val = symbols[varNode.name] ?? globalSymbols[varNode.name] ?? constants[varNode.name] else {
-                throw EvalError.undefinedVariable(varNode.name)
-            }
-            return .normal(val)
-        }
-        
-        if let assignNode = node as? AssignmentNode {
-            let val = try evaluate(node: assignNode.expr, symbols: &symbols)
-            let v = numericValue(val)
-            symbols[assignNode.variable] = v
-            return .normal(v)
-        }
+    private func execute(_ statement: StmtNode) throws -> Flow {
+        currentLine = statement.line
 
-        if let compAssign = node as? CompoundAssignNode {
-            guard let current = symbols[compAssign.variable] ?? globalSymbols[compAssign.variable] ?? constants[compAssign.variable] else {
-                throw EvalError.undefinedVariable(compAssign.variable)
-            }
-            let val = try evaluate(node: compAssign.expr, symbols: &symbols)
-            let v = numericValue(val)
-            let updated: Double
-            switch compAssign.op {
-            case .plus: updated = current + v
-            case .minus: updated = current - v
-            }
-            symbols[compAssign.variable] = updated
-            return .normal(updated)
-        }
-        
-        if let multiAssign = node as? MultiAssignNode {
-            let result = try evaluate(node: multiAssign.call, symbols: &symbols)
-            // A builtin call yields .normal, not .returnValues (it has no return-count concept
-            // of its own) - treat it as a single returned value so it can still be multi-assigned,
-            // and so the count-mismatch check below applies to it uniformly.
-            let vals: [Double]
-            switch result {
-            case .returnValues(let v): vals = v
-            case .normal(let v): vals = [v]
-            }
-            if vals.count != multiAssign.variables.count {
-                // Kept short - this prints on a narrow on-screen console, not just Xcode's.
-                output("Warning: '\(multiAssign.call.name)' returned \(vals.count), expected \(multiAssign.variables.count)\n")
-            }
-            for (i, v) in vals.enumerated() where i < multiAssign.variables.count {
-                symbols[multiAssign.variables[i]] = v
-            }
-            return .normal(0.0)
-        }
-        
-        if let retNode = node as? ReturnNode {
-            var vals: [Double] = []
-            for expr in retNode.exprs {
-                let val = try evaluate(node: expr, symbols: &symbols)
-                vals.append(numericValue(val))
-            }
-            return .returnValues(vals)
-        }
+        switch statement {
+        case let node as DeclareNode:
+            define(node.name, Box(try initialValue(for: node)))
 
-        // (continued in Part 2)
-        if let binNode = node as? BinaryOpNode {
-            let l = try evaluate(node: binNode.left, symbols: &symbols)
-            let r = try evaluate(node: binNode.right, symbols: &symbols)
-            let lv = numericValue(l)
-            let rv = numericValue(r)
-            switch binNode.op {
-            case .plus: return .normal(lv + rv)
-            case .minus: return .normal(lv - rv)
-            case .multiply: return .normal(lv * rv)
-            case .divide: return .normal(lv / rv)
-            case .modulus: return .normal(lv.truncatingRemainder(dividingBy: rv))
-            case .power: return .normal(pow(lv, rv))
-            case .equal: return .normal((lv == rv) ? 1.0 : 0.0)
-            case .notEqual: return .normal((lv != rv) ? 1.0 : 0.0)
-            case .less: return .normal((lv < rv) ? 1.0 : 0.0)
-            case .greater: return .normal((lv > rv) ? 1.0 : 0.0)
-            case .and: return .normal(((lv != 0) && (rv != 0)) ? 1.0 : 0.0)
-            case .or: return .normal(((lv != 0) || (rv != 0)) ? 1.0 : 0.0)
+        case let node as AssignNode:
+            try store(try evaluate(node.expr), into: node.target, line: node.line)
+
+        case let node as CompoundAssignNode:
+            let current = try load(node.target, line: node.line)
+            let delta = try evaluate(node.expr)
+            let op: BinaryOpNode.Op = node.op == .add ? .add : .subtract
+            try store(try apply(op, current, delta, node.line), into: node.target, line: node.line)
+
+        case let node as MultiAssignNode:
+            let values = try callNode(node.call)
+            for (i, target) in node.targets.enumerated() where i < values.count {
+                try store(values[i], into: target, line: node.line)
             }
-        }
-        
-        if let callNode = node as? FunctionCallNode {
-            if let builtin = builtins[callNode.name] {
-                var argVals: [Double] = []
-                for (i, arg) in callNode.args.enumerated() {
-                    if let strNode = arg as? StringNode {
-                        throw EvalError.wrongArgType(callNode.name, position: i+1, got: "\"\(strNode.value)\"")
-                    }
-                    let val = try evaluate(node: arg, symbols: &symbols)
-                    argVals.append(numericValue(val))
-                }
-                // Same asymmetry user functions use (see executeFunction): too few arguments
-                // leaves the closure with nothing to read and cannot proceed, too many is
-                // recoverable and only warns.
-                guard argVals.count >= builtin.arity else {
-                    throw EvalError.wrongArgCount(callNode.name, expected: builtin.arity, got: argVals.count)
-                }
-                if argVals.count > builtin.arity {
-                    output("Warning: '\(callNode.name)' extra args provided - ignoring\n")
-                }
-                return .normal(builtin.apply(argVals))
-            }
-            if let def = userFunctions[callNode.name] {
-                var argVals: [Double] = []
-                for arg in callNode.args {
-                    let val = try evaluate(node: arg, symbols: &symbols)
-                    argVals.append(numericValue(val))
-                }
-                let outs = try executeFunction(def, args: argVals)
-                return .returnValues(outs)
-            }
-            throw EvalError.unknownFunction(callNode.name)
-        }
-        
-        if let printNode = node as? PrintNode {
+
+        case let node as ReturnNode:
+            return .returned(try node.exprs.map { try evaluate($0) })
+
+        case let node as PrintNode:
             var text = ""
-            for item in printNode.items {
-                if let strNode = item as? StringNode {
-                    text += strNode.value + " "
-                } else {
-                    let val = try evaluate(node: item, symbols: &symbols)
-                    text += "\(numericValue(val)) "
+            for item in node.items {
+                // A directive, not a value: it changes the precision and prints nothing,
+                // and because items are handled in order it applies to the rest of this
+                // same line - '? prec(12) x' shows x at twelve places.
+                if let directive = item as? PrecisionNode {
+                    guard case .int(let places) = try evaluate(directive.places) else {
+                        throw RuntimeError(message: "prec() needs an int number of places",
+                                           line: node.line)
+                    }
+                    Value.setPlaces(Int(places))
+                    continue
                 }
-            }
-            output(text + (printNode.newline ? "\n" : ""))
-            return .normal(0.0)
-        }
-        
-        if let ifNode = node as? IfElseChainNode {
-            for (cond, body) in ifNode.branches {
-                let val = try evaluate(node: cond, symbols: &symbols)
-                if numericValue(val) != 0 {
-                    return try executeBlock(body, symbols: &symbols)
+                let value = try evaluate(item)
+                guard let grid = value.grid else {
+                    text += value.text + " "
+                    continue
                 }
+                if grid.isMultiRow && !text.isEmpty { text += "\n" }
+                text += grid.text + " "
             }
-            if let elseBody = ifNode.elseBranch {
-                return try executeBlock(elseBody, symbols: &symbols)
-            }
-            return .normal(0.0)
-        }
+            output(text + (node.newline ? "\n" : ""))
 
-        if let whileNode = node as? WhileNode {
+        case let node as CallNode:
+            _ = try callNode(node)
+
+        case let node as IfNode:
+            for branch in node.branches where try evaluate(branch.condition).isTruthy {
+                return try inScope { try execute(branch.body) }
+            }
+            if let elseBody = node.elseBody {
+                return try inScope { try execute(elseBody) }
+            }
+
+        case let node as WhileNode:
+            while try evaluate(node.condition).isTruthy {
+                if case .returned(let values) = try inScope({ try execute(node.body) }) {
+                    return .returned(values)
+                }
+            }
+
+        case let node as ForNode:
+            return try executeFor(node)
+
+        default:
+            break
+        }
+        return .normal
+    }
+
+    private func inScope(_ body: () throws -> Flow) rethrows -> Flow {
+        scopes.append([:])
+        defer { scopes.removeLast() }
+        return try body()
+    }
+
+    private func executeFor(_ node: ForNode) throws -> Flow {
+        let start = try evaluate(node.start)
+        let end = try evaluate(node.end)
+        let step = try node.step.map { try evaluate($0) } ?? defaultStep(like: start)
+
+        scopes.append([:])
+        defer { scopes.removeLast() }
+        let counter = Box(start)
+        scopes[scopes.count - 1][node.variable] = counter
+
+        if case .real(let startValue) = start,
+           case .real(let endValue) = end,
+           case .real(let stepValue) = step {
+            for (value, role) in [(startValue, "start"), (endValue, "end"), (stepValue, "step")] {
+                guard value.isFinite else {
+                    throw RuntimeError(message: "Loop \(role) out of range: \(value)", line: node.line)
+                }
+            }
+            guard stepValue != 0 else {
+                throw RuntimeError(message: "Step value cannot be zero", line: node.line)
+            }
+            var n = 0.0
             while true {
-                let condVal = try evaluate(node: whileNode.condition, symbols: &symbols)
-                if numericValue(condVal) == 0 { break }
-                let result = try executeBlock(whileNode.body, symbols: &symbols)
-                if case .returnValues = result { return result }
+                let value = startValue + n * stepValue
+                if stepValue > 0 ? value > endValue : value < endValue { break }
+                counter.value = .real(value)
+                if case .returned(let values) = try execute(node.body) { return .returned(values) }
+                n += 1
             }
-            return .normal(0.0)
-        }
-        
-        if let forNode = node as? ForLoopNode {
-            let startValDouble = numericValue(try evaluate(node: forNode.startExpr, symbols: &symbols))
-            let endValDouble = numericValue(try evaluate(node: forNode.endExpr, symbols: &symbols))
-            let stepValDouble = numericValue(try evaluate(node: forNode.stepExpr, symbols: &symbols))
-
-            var i = try loopBound(startValDouble, "start")
-            let endVal = try loopBound(endValDouble, "end")
-            let stepVal = try loopBound(stepValDouble, "step")
-
-            if stepVal > 0 {
-                while i <= endVal {
-                    symbols[forNode.variable] = Double(i)
-                    let result = try executeBlock(forNode.body, symbols: &symbols)
-                    if case .returnValues = result { return result }
-                    i += stepVal
-                }
-            } else if stepVal < 0 {
-                while i >= endVal {
-                    symbols[forNode.variable] = Double(i)
-                    let result = try executeBlock(forNode.body, symbols: &symbols)
-                    if case .returnValues = result { return result }
-                    i += stepVal
-                }
-            } else {
-                throw EvalError.runtime("Step value cannot be zero")
-            }
-            return .normal(0.0)
+            return .normal
         }
 
-        throw EvalError.runtime("Unknown node type")
+        guard case .int(let startValue) = start,
+              case .int(let endValue) = end,
+              case .int(let stepValue) = step else {
+            throw RuntimeError(message: "A loop counter must be int or real", line: node.line)
+        }
+        guard stepValue != 0 else {
+            throw RuntimeError(message: "Step value cannot be zero", line: node.line)
+        }
+        var i = startValue
+        while stepValue > 0 ? i <= endValue : i >= endValue {
+            counter.value = .int(i)
+            if case .returned(let values) = try execute(node.body) { return .returned(values) }
+            let (next, overflow) = i.addingReportingOverflow(stepValue)
+            if overflow { break }
+            i = next
+        }
+        return .normal
+    }
+
+    private func defaultStep(like value: Value) -> Value {
+        if case .real = value { return .real(1) }
+        return .int(1)
+    }
+
+    private func initialValue(for node: DeclareNode) throws -> Value {
+        var sizes: [Int] = []
+        for size in node.sizes {
+            let value = try evaluate(size)
+            guard case .int(let count) = value else {
+                throw RuntimeError(message: "'\(node.name)': array size must be an int, got \(value.text)",
+                                   line: node.line)
+            }
+            guard count >= 1 else {
+                throw RuntimeError(message: "'\(node.name)': array size must be at least 1, got \(count)",
+                                   line: node.line)
+            }
+            sizes.append(Int(count))
+        }
+
+        var value = Value.zero(of: node.type, sizes: sizes)
+        if let initial = node.initial {
+            value = try fit(try evaluate(initial), into: value, line: node.line)
+        }
+        return value
+    }
+
+    private func fit(_ source: Value, into target: Value, line: Int) throws -> Value {
+        guard case .array(let targetRef) = target else { return source }
+        guard case .array(let sourceRef) = source else { return target }
+
+        let isChars = targetRef.elements.first.map { if case .char = $0 { return true } else { return false } } ?? false
+        let capacity = isChars ? max(0, targetRef.elements.count - 1) : targetRef.elements.count
+
+        for i in 0..<min(capacity, sourceRef.elements.count) {
+            targetRef.elements[i] = try fit(sourceRef.elements[i], into: targetRef.elements[i], line: line)
+        }
+        return target
+    }
+
+    private func load(_ target: LValue, line: Int) throws -> Value {
+        switch target {
+        case .variable(let name):
+            return try lookup(name, line).value
+        case .element(let base, let index):
+            let (ref, i) = try resolveElement(base, index, line: line)
+            return ref.elements[i]
+        }
+    }
+
+    private func store(_ value: Value, into target: LValue, line: Int) throws {
+        switch target {
+        case .variable(let name):
+            guard existsInScope(name) else {
+                define(name, Box(value))
+                return
+            }
+            let box = try lookup(name, line)
+            if case .array(let existing) = box.value, case .array = value,
+               existing.elements.first.map({ if case .char = $0 { return true } else { return false } }) ?? false {
+                for i in existing.elements.indices { existing.elements[i] = .char(0) }
+                _ = try fit(value, into: box.value, line: line)
+                return
+            }
+            box.value = value
+        case .element(let base, let index):
+            let (ref, i) = try resolveElement(base, index, line: line)
+            ref.elements[i] = value
+        }
+    }
+
+    private func resolveElement(_ base: LValue, _ index: ExprNode, line: Int) throws -> (ArrayRef, Int) {
+        let container = try load(base, line: line)
+        guard case .array(let ref) = container else {
+            throw RuntimeError(message: "Cannot index a scalar", line: line)
+        }
+        guard case .int(let raw) = try evaluate(index) else {
+            throw RuntimeError(message: "An index must be int", line: line)
+        }
+        let i = Int(raw)
+        guard i >= 0 && i < ref.elements.count else {
+            throw RuntimeError(message: "Index \(i) out of range 0...\(ref.elements.count - 1)", line: line)
+        }
+        return (ref, i)
+    }
+
+    // Walks down 'axis' levels taking the first element at each, then counts. An axis the
+    // value does not reach answers -1: that is what makes 'v.col' on a one-dimensional
+    // array a legal question with a recognizable "there is no such dimension" answer,
+    // rather than an error the caller has to avoid triggering. It is measured, not
+    // declared, so a row substituted at run time is reported at its real length.
+    private static func size(of value: Value, axis: Int) -> Int {
+        guard axis >= 0, case .array(let ref) = value else { return -1 }
+        if axis == 0 { return ref.elements.count }
+        guard let first = ref.elements.first else { return -1 }
+        return size(of: first, axis: axis - 1)
+    }
+
+    private func evaluate(_ expr: ExprNode) throws -> Value {
+        switch expr {
+        case let node as IntNode:
+            guard let value = Int32(exactly: node.value) else {
+                throw RuntimeError(message: "Integer literal \(node.value) does not fit 4 bytes",
+                                   line: currentLine)
+            }
+            return .int(value)
+
+        case let node as RealNode:
+            return .real(node.value)
+
+        case let node as StringNode:
+            var elements = node.value.utf8.map { Value.char($0) }
+            elements.append(.char(0))
+            return .array(ArrayRef(elements))
+
+        case let node as VariableNode:
+            return try lookup(node.name, currentLine).value
+
+        case let node as IndexNode:
+            let container = try evaluate(node.base)
+            guard case .array(let ref) = container else {
+                throw RuntimeError(message: "Cannot index a scalar", line: currentLine)
+            }
+            guard case .int(let raw) = try evaluate(node.index) else {
+                throw RuntimeError(message: "An index must be int", line: currentLine)
+            }
+            let i = Int(raw)
+            guard i >= 0 && i < ref.elements.count else {
+                throw RuntimeError(message: "Index \(i) out of range 0...\(ref.elements.count - 1)",
+                                   line: currentLine)
+            }
+            return ref.elements[i]
+
+        case let node as DimNode:
+            let container = try evaluate(node.base)
+            guard case .int(let axis) = try evaluate(node.axis) else {
+                throw RuntimeError(message: "'.\(node.spelling)' needs an int axis", line: currentLine)
+            }
+            return .int(Int32(clamping: Interpreter.size(of: container, axis: Int(axis))))
+
+        case let node as ConvertNode:
+            return try convert(try evaluate(node.expr), to: node.to)
+
+        case let node as BinaryOpNode:
+            return try apply(node.op, try evaluate(node.lhs), try evaluate(node.rhs), currentLine)
+
+        case let node as ArrayLiteralNode:
+            return .array(ArrayRef(try node.elements.map { try evaluate($0) }))
+
+        case let node as CallNode:
+            let values = try callNode(node)
+            return values.first ?? .int(0)
+
+        default:
+            throw RuntimeError(message: "Cannot evaluate \(type(of: expr))", line: currentLine)
+        }
+    }
+
+    private func convert(_ value: Value, to target: ShalimarType) throws -> Value {
+        switch (value, target) {
+        case (.int(let v), .real):
+            return .real(Double(v))
+        case (.real(let v), .int):
+            guard v.isFinite, let truncated = Int32(exactly: v.rounded(.towardZero)) else {
+                throw RuntimeError(message: "Cannot convert \(v) to int", line: currentLine)
+            }
+            return .int(truncated)
+        default:
+            return value
+        }
+    }
+
+    private func apply(_ op: BinaryOpNode.Op, _ lhs: Value, _ rhs: Value, _ line: Int) throws -> Value {
+        func truth(_ condition: Bool) -> Value { .int(condition ? 1 : 0) }
+
+        switch op {
+        case .and: return truth(lhs.isTruthy && rhs.isTruthy)
+        case .or:  return truth(lhs.isTruthy || rhs.isTruthy)
+        default:   break
+        }
+
+        if case .int(let a) = lhs, case .int(let b) = rhs {
+            switch op {
+            case .add:      return .int(try guarded(a.addingReportingOverflow(b), op, line))
+            case .subtract: return .int(try guarded(a.subtractingReportingOverflow(b), op, line))
+            case .multiply: return .int(try guarded(a.multipliedReportingOverflow(by: b), op, line))
+            case .divide:
+                guard b != 0 else { throw RuntimeError(message: "Division by zero", line: line) }
+                return .int(try guarded(a.dividedReportingOverflow(by: b), op, line))
+            case .modulus:
+                guard b != 0 else { throw RuntimeError(message: "Division by zero", line: line) }
+                return .int(try guarded(a.remainderReportingOverflow(dividingBy: b), op, line))
+            case .power:
+                guard b >= 0 else { throw RuntimeError(message: "A negative int power needs real operands", line: line) }
+                var result: Int32 = 1
+                for _ in 0..<b { result = try guarded(result.multipliedReportingOverflow(by: a), op, line) }
+                return .int(result)
+            case .equal:    return truth(a == b)
+            case .notEqual: return truth(a != b)
+            case .less:     return truth(a < b)
+            case .greater:  return truth(a > b)
+            case .and, .or: break
+            }
+        }
+
+        let a = try number(lhs, line)
+        let b = try number(rhs, line)
+        switch op {
+        case .add:      return .real(a + b)
+        case .subtract: return .real(a - b)
+        case .multiply: return .real(a * b)
+        case .divide:   return .real(a / b)
+        case .modulus:  return .real(a.truncatingRemainder(dividingBy: b))
+        case .power:    return .real(pow(a, b))
+        case .equal:    return truth(a == b)
+        case .notEqual: return truth(a != b)
+        case .less:     return truth(a < b)
+        case .greater:  return truth(a > b)
+        case .and, .or: return truth(false)
+        }
+    }
+
+    private func guarded(_ result: (partialValue: Int32, overflow: Bool),
+                         _ op: BinaryOpNode.Op, _ line: Int) throws -> Int32 {
+        guard !result.overflow else {
+            throw RuntimeError(message: "int overflow in '\(op.rawValue)' - the value does not fit "
+                               + "4 bytes (max \(Int32.max)). Use real.", line: line)
+        }
+        return result.partialValue
+    }
+
+    private func number(_ value: Value, _ line: Int) throws -> Double {
+        switch value {
+        case .real(let v): return v
+        case .int(let v):  return Double(v)
+        case .char(let v): return Double(v)
+        case .array:       throw RuntimeError(message: "Expected a number, got an array", line: line)
+        }
+    }
+
+    private func callNode(_ node: CallNode) throws -> [Value] {
+        let line = node.line
+        currentLine = line
+
+        if let values = try callBuiltin(node) { return values }
+
+        guard let prototype = prototypes[node.callee] else {
+            throw RuntimeError(message: "Unknown function '\(node.callee)'", line: line)
+        }
+
+        var arguments: [Value] = []
+        var boxes: [Int: Box] = [:]
+        var writeBacks: [(Box, LValue)] = []
+        for (i, argument) in node.arguments.enumerated() {
+            let value = try evaluate(argument)
+            arguments.append(value)
+            if i < prototype.inputs.count,
+               prototype.inputs[i].byReference,
+               !prototype.inputs[i].type.isReference,
+               let target = lvalue(of: argument) {
+                let box = Box(value)
+                boxes[i] = box
+                writeBacks.append((box, target))
+            }
+        }
+
+        let outputs = try call(prototype, arguments: arguments, boxes: boxes, line: line)
+        for (box, target) in writeBacks {
+            try store(box.value, into: target, line: line)
+        }
+        return outputs
+    }
+
+    private func lvalue(of expr: ExprNode) -> LValue? {
+        switch expr {
+        case let node as VariableNode:
+            return .variable(node.name)
+        case let node as IndexNode:
+            guard let base = lvalue(of: node.base) else { return nil }
+            return .element(base, index: node.index)
+        default:
+            return nil
+        }
+    }
+
+    private func callBuiltin(_ node: CallNode) throws -> [Value]? {
+        let line = node.line
+
+        switch node.callee {
+        case "len":
+            guard case .array(let ref) = try evaluate(node.arguments[0]) else {
+                throw RuntimeError(message: "len() needs an array", line: line)
+            }
+            return [.int(Int32(ref.elements.count))]
+
+        case "int":
+            return [try convert(try evaluate(node.arguments[0]), to: .int)]
+        case "real":
+            return [try convert(try evaluate(node.arguments[0]), to: .real)]
+
+        case "max", "min":
+            let a = try evaluate(node.arguments[0])
+            let b = try evaluate(node.arguments[1])
+            if case .int(let x) = a, case .int(let y) = b {
+                return [.int(node.callee == "max" ? Swift.max(x, y) : Swift.min(x, y))]
+            }
+            let x = try number(a, line), y = try number(b, line)
+            return [.real(node.callee == "max" ? Swift.max(x, y) : Swift.min(x, y))]
+
+        default:
+            break
+        }
+
+        let unary: [String: (Double) -> Double] = [
+            "abs": abs, "sqrt": sqrt, "log": log,
+            "sin": sin, "cos": cos, "tan": tan,
+            "asin": asin, "acos": acos, "atan": atan,
+            "round": { $0.rounded(.toNearestOrAwayFromZero) }, "ceil": ceil, "floor": floor
+        ]
+        if let function = unary[node.callee] {
+            return [.real(function(try number(try evaluate(node.arguments[0]), line)))]
+        }
+
+        let binary: [String: (Double, Double) -> Double] = ["atan2": atan2, "pow": pow]
+        if let function = binary[node.callee] {
+            let a = try number(try evaluate(node.arguments[0]), line)
+            let b = try number(try evaluate(node.arguments[1]), line)
+            return [.real(function(a, b))]
+        }
+
+        return nil
     }
 }

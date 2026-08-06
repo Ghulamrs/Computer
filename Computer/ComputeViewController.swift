@@ -20,7 +20,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     var count: Int = 0
     var source: String {
         """
-        fun <>=main() {
+        fun <> = main() {
            ? "Hello world!"
         }
         """
@@ -28,6 +28,11 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     override func viewDidLoad() {
         super.viewDidLoad()
+        // SF Mono, which has no name to pass to UIFont(name:) on iOS - the system API is
+        // the only way to reach it. Set before lineview copies it below so the gutter and
+        // the editor keep the same line height and the numbers stay on their lines.
+        program.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+
         lineview.delegate = self
         lineview.textColor = UIColor.init(displayP3Red: 0.75, green: 0.75, blue: 0.75, alpha: 1)
         lineview.font = program.font
@@ -54,13 +59,17 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         program.keyboardType = .asciiCapable
         program.backgroundColor = UIColor.init(displayP3Red: 0.8, green: 1, blue: 0.95, alpha: 1)
         console.backgroundColor = UIColor.init(white: 0.8, alpha: 0.5)
-        program.textColor = UIColor.init(displayP3Red: 0.8, green: 0.5, blue: 0.95, alpha: 1)
+        // The original violet, deepened to carry at 12pt but not to black - about 4.1:1
+        // against the mint background set below. Not .label or a dynamic colour: that
+        // background is fixed light, so anything inverting in dark mode would land white
+        // on mint.
+        program.textColor = UIColor.init(displayP3Red: 0.63, green: 0.35, blue: 0.75, alpha: 1)
 
         console.textColor = UIColor.red
         console.isScrollEnabled = true
         console.isEditable = false
         if coordinator!.fileURL.isEmpty {
-            program.text = source
+            program.text = Self.reindented(source)
         } else {
             load(fileName: coordinator!.fileURL)
         }
@@ -102,12 +111,143 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         if !program.text.isEmpty { self.count = 0 }
     }
 
+    // Three spaces a level, which is what the phone column can afford: at 12pt a line
+    // holds about 47 characters, so a wider step pushes nested bodies into wrapping and
+    // the wrapping is what knocks the line-number gutter out of register.
+    static let indentWidth = 3
+
+    // Braces opened and closed on one line, ignoring any that are not structure: a brace
+    // inside a string or after // is text. No escape handling, because the lexer has no
+    // escapes - its string pattern is "[^"]*", so the first quote always closes.
+    // leadingCloses counts only the braces before anything else on the line; those are
+    // what pull the line itself back out a level.
+    private static func braceCounts(in line: String) -> (opens: Int, closes: Int, leadingCloses: Int) {
+        var opens = 0, closes = 0, leadingCloses = 0
+        var atLineHead = true
+        var inString = false
+        var previous: Character?
+
+        for char in line {
+            if inString {
+                if char == "\"" { inString = false }
+                previous = char
+                continue
+            }
+            if char == "\"" {
+                inString = true
+                atLineHead = false
+                previous = char
+                continue
+            }
+            if char == "/" && previous == "/" { break }
+
+            switch char {
+            case "{":
+                opens += 1
+                atLineHead = false
+            case "}":
+                closes += 1
+                if atLineHead { leadingCloses += 1 }
+            default:
+                if !char.isWhitespace { atLineHead = false }
+            }
+            previous = char
+        }
+
+        return (opens, closes, leadingCloses)
+    }
+
+    // How deep in braces the text ends up - the level a line appended to it belongs at.
+    static func braceDepth(of source: String) -> Int {
+        var depth = 0
+        for line in source.components(separatedBy: "\n") {
+            let counts = braceCounts(in: line)
+            depth = max(0, depth + counts.opens - counts.closes)
+        }
+        return depth
+    }
+
+    // Lays the whole program out by brace depth. Existing leading space is discarded
+    // rather than respected: the point is to impose one consistent step, and a file
+    // typed on the phone or arriving from the scanner has no indentation worth keeping.
+    static func reindented(_ source: String) -> String {
+        var depth = 0
+        var out = [String]()
+
+        for rawLine in source.components(separatedBy: "\n") {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else {
+                out.append("")
+                continue
+            }
+
+            let counts = braceCounts(in: line)
+            // Dedent before writing, so a line that opens with } settles under the line
+            // that opened its group rather than under the group's contents.
+            let level = max(0, depth - counts.leadingCloses)
+            out.append(String(repeating: " ", count: level * indentWidth) + line)
+            depth = max(0, depth + counts.opens - counts.closes)
+        }
+
+        return out.joined(separator: "\n")
+    }
+
+    // NSRange offsets are UTF-16, so the document is measured as NSString throughout
+    // rather than by Character - the two disagree the moment anything non-ASCII lands in
+    // the buffer, and the keyboard traits do not guarantee it cannot.
+    private static func textRange(in textView: UITextView, for range: NSRange) -> UITextRange? {
+        guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
+              let end = textView.position(from: start, offset: range.length) else { return nil }
+        return textView.textRange(from: start, to: end)
+    }
+
+    // The edit that lays out `text` at its brace level, or nil when what the user typed
+    // already sits where it belongs and can be inserted untouched.
+    private static func indentedInsertion(of text: String,
+                                          into textView: UITextView,
+                                          replacing range: NSRange) -> (text: String, range: NSRange)? {
+        let document = (textView.text ?? "") as NSString
+        guard range.location <= document.length else { return nil }
+        let head = document.substring(to: range.location)
+
+        if text == "\n" {
+            let depth = braceDepth(of: head)
+            guard depth > 0 else { return nil }
+            return ("\n" + String(repeating: " ", count: depth * indentWidth), range)
+        }
+
+        // A } only moves its line when nothing precedes it there; typed mid-line, as in
+        // an array literal closing where it opened, it is left exactly where it fell.
+        let lineStart = (head as NSString).range(of: "\n", options: .backwards).location
+        let start = lineStart == NSNotFound ? 0 : lineStart + 1
+        let onLine = document.substring(with: NSRange(location: start, length: range.location - start))
+        guard onLine.allSatisfy({ $0 == " " || $0 == "\t" }) else { return nil }
+
+        let depth = max(0, braceDepth(of: document.substring(to: start)) - 1)
+        let replacement = String(repeating: " ", count: depth * indentWidth) + "}"
+        guard replacement != onLine + "}" else { return nil }
+        return (replacement, NSRange(location: start, length: NSMaxRange(range) - start))
+    }
+
     // The keyboard traits set in viewDidLoad are only a hint - the globe key and pasting
     // both bypass them - so this is where ASCII is actually enforced. It shares the
     // scanner's substitution table, so text that is typed, pasted, or scanned all end up
     // as the same ASCII source rather than a lookalike that fails at run time.
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard textView === program else { return true }
+
+        // Enter carries the brace depth onto the new line, and a } typed as the first
+        // thing on a line pulls that line back one level. Between them the text stays
+        // laid out as it is typed, so reindenting is only needed on the way in.
+        if text == "\n" || text == "}" {
+            if let indented = Self.indentedInsertion(of: text, into: textView, replacing: range),
+               let editRange = Self.textRange(in: textView, for: indented.range) {
+                textView.replace(editRange, withText: indented.text)
+                return false
+            }
+            return true
+        }
+
         let normalized = Self.normalizedToASCII(text)
         guard normalized != text else { return true }
 
@@ -161,11 +301,25 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
             return
         }
 
+        // The 3.0 stage between parsing and running. It validates every call, return and
+        // reference argument against the prototype that owns it, resolves every name, and
+        // hands back a rewritten AST in which each implicit conversion is a ConvertNode -
+        // so the interpreter does no inference of its own.
+        let checker = Checker()
+        let checkedAST = checker.check(astNodes)
+
+        // Warnings show either way; only errors stop the run. Unlike the other two stages
+        // this one does not stop at the first problem, so the console lists them all.
+        for diagnostic in checker.diagnostics {
+            console.text += "\(diagnostic)\n"
+        }
+        if checker.hasErrors { return }
+
         let interpreter = Interpreter()
         interpreter.output = { [weak self] text in
             self?.console.text += text
         }
-        interpreter.runProgram(astNodes)
+        interpreter.run(checkedAST)
     }
 
     @objc func scanTapped() {
@@ -244,7 +398,9 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
             DispatchQueue.main.async {
                 guard let self = self else { return }
-                self.program.text = scannedText
+                // Line count is preserved, so the numbers in lateCommands still point at
+                // the lines the user is about to be shown.
+                self.program.text = Self.reindented(scannedText)
                 var message = "Let's review the code before running."
                 if let first = lateCommands.first {
                     message += "\n\nLine \(first) has a '?' that isn't at the start of the line"
@@ -287,7 +443,11 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         "\u{201C}": "\"", "\u{201D}": "\"", "\u{2018}": "'", "\u{2019}": "'",
         "\u{2013}": "-", "\u{2014}": "-", "\u{2212}": "-",
         "×": "*", "÷": "/", "\u{00A0}": " ",
-        "：": ":", "（": "(", "）": ")", "＊": "*", "，": ","
+        "：": ":", "（": "(", "）": ")", "＊": "*", "，": ",",
+        // A dot used to appear only inside a numeral, where a wrong glyph produced a loud
+        // "Malformed number". Since '.row'/'.col'/'.dim(n)' it also carries syntax, so the
+        // full-stop lookalikes have to be folded back to ASCII too.
+        "。": ".", "．": ".", "•": "."
     ]
 
     private static func normalizedToASCII(_ text: String) -> String {
@@ -386,7 +546,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         do {
             let docDirURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let fileURL = docDirURL.appendingPathComponent(fileName) //.appendingPathExtension("sha")
-            program.text = try String(contentsOf: fileURL)
+            program.text = Self.reindented(try String(contentsOf: fileURL))
         } catch let error as NSError {
             print(error)
         }

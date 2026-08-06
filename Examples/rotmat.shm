@@ -1,0 +1,103 @@
+// rotmat.shm
+// The three axis rotations and the composite RotMat = Rz Ry Rx, which is the
+// yaw-pitch-roll order: roll is applied first and yaw last. Each builder fills a
+// caller-supplied 3x3 rather than returning one, because an array argument is a
+// reference - that is the same shape as invert.shm, and it keeps the storage with
+// the caller who knows how long it needs to live.
+fun <> = ROX(angle: real, R[][]: real) {
+  real c : cos(angle)
+  real s : sin(angle)
+  R[0][0] : 1.0  R[0][1] : 0.0  R[0][2] : 0.0
+  R[1][0] : 0.0  R[1][1] : c    R[1][2] : -s
+  R[2][0] : 0.0  R[2][1] : s    R[2][2] : c
+}
+
+fun <> = ROY(angle: real, R[][]: real) {
+  real c : cos(angle)
+  real s : sin(angle)
+  R[0][0] : c    R[0][1] : 0.0  R[0][2] : s
+  R[1][0] : 0.0  R[1][1] : 1.0  R[1][2] : 0.0
+  R[2][0] : -s   R[2][1] : 0.0  R[2][2] : c
+}
+
+fun <> = ROZ(angle: real, R[][]: real) {
+  real c : cos(angle)
+  real s : sin(angle)
+  R[0][0] : c    R[0][1] : -s   R[0][2] : 0.0
+  R[1][0] : s    R[1][1] : c    R[1][2] : 0.0
+  R[2][0] : 0.0  R[2][1] : 0.0  R[2][2] : 1.0
+}
+
+// c : a b, sized from the operands so this is not tied to 3x3. The accumulator is
+// hoisted out of the loops: c may alias neither a nor b, and writing c[i][j] only
+// once the row-column sum is complete is what would let it.
+fun <> = matmul(a[][]: real, b[][]: real, c[][]: real) {
+  int n : len(a)
+  int m : len(b[0])
+  int k : len(b)
+  real sum : 0.0
+
+  for i : 0 to n - 1 {
+    for j : 0 to m - 1 {
+      sum : 0.0
+      for p : 0 to k - 1 {
+        sum +: a[i][p] * b[p][j]
+      }
+      c[i][j] : sum
+    }
+  }
+}
+
+// Degrees in, radians out. atan2(1,1) is pi/4 exactly, so this needs no literal for
+// pi - the language has no constants and a typed-out 3.14159 would be the least
+// accurate number in the file.
+fun <real> = rad(deg: real) {
+  return deg * atan2(1.0, 1.0) / 45.0
+}
+
+fun <> = RotMat(roll: real, pitch: real, yaw: real, R[][]: real) {
+  real X[3][3]
+  real Y[3][3]
+  real Z[3][3]
+  real T[3][3]
+
+  ROX(roll, X)
+  ROY(pitch, Y)
+  ROZ(yaw, Z)
+
+  // Right to left: T holds Rz Ry, then R holds T Rx. Composing in this order means
+  // R v rotates v by roll, then pitch, then yaw.
+  matmul(Z, Y, T)
+  matmul(T, X, R)
+}
+
+fun <> = main() {
+  real R[3][3]
+
+  // Yaw alone by 90 degrees: x goes to y, y goes to -x.
+  RotMat(rad(0.0), rad(0.0), rad(90.0), R)
+  ? "yaw 90"
+  ? R
+
+  // Roll alone by 90 degrees, to show the composition is not silently transposed.
+  RotMat(rad(90.0), rad(0.0), rad(0.0), R)
+  ? "roll 90"
+  ? R
+
+  // All three at 90: Rz Ry Rx, which is not the same as any single axis turn.
+  RotMat(rad(90.0), rad(90.0), rad(90.0), R)
+  ? "roll pitch yaw 90"
+  ? R
+}
+// expected: yaw 90
+// expected:  0.0000000  -1.0000000   0.0000000
+// expected:  1.0000000   0.0000000   0.0000000
+// expected:  0.0000000   0.0000000   1.0000000
+// expected: roll 90
+// expected:  1.0000000   0.0000000   0.0000000
+// expected:  0.0000000   0.0000000  -1.0000000
+// expected:  0.0000000   1.0000000   0.0000000
+// expected: roll pitch yaw 90
+// expected:  0.0000000   0.0000000   1.0000000
+// expected:  0.0000000   1.0000000   0.0000000
+// expected: -1.0000000   0.0000000   0.0000000

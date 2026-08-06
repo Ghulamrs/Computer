@@ -235,7 +235,7 @@
                         <autoresizingMask key="autoresizingMask" widthSizable="YES" heightSizable="YES"/>
                         <subviews>
                             <textView clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="scaleToFill" editable="NO" textAlignment="right" selectable="NO" translatesAutoresizingMaskIntoConstraints="NO" id="Gkn-N0-i70">
-                                <rect key="frame" x="0.0" y="53" width="35" height="324.5"/>
+                                <rect key="frame" x="0.0" y="28" width="35" height="341.5"/>
                                 <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
                                 <constraints>
                                     <constraint firstAttribute="width" constant="35" id="S4a-KZ-UKO"/>
@@ -254,45 +254,24 @@
                                 <textInputTraits key="textInputTraits" autocapitalizationType="sentences"/>
                             </textView>
                             <textView clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="5Uh-u8-0jA">
-                                <rect key="frame" x="43" y="53" width="261" height="324.5"/>
+                                <rect key="frame" x="43" y="28" width="261" height="341.5"/>
                                 <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-                                <mutableString key="text">
-fun &lt;&gt; = main() {
+                                <string key="text">fun &lt;&gt; = main() {
   a : 1
   b : 2
   c : 1
   d : b^2-4*a*c
   if d &lt; 0 {
-    ? "No real roots"
+    ? "no real roots"
   }
   else {
      d : sqrt(d)
      x1 : (-b-d)/(2*a)
      x2 : (-b+d)/(2*a)
-     ? "Solution" x1 x2
+     ? x1 x2
   }
 }
-fun &lt;m,i&gt;= prime(n) {
-    i : 2
-    m : n%i
-    if m = 0 { return m i }
-    q : sqrt(n)
-    q : ceil(q)
-    for j:3 to q step 2 {
-      i : j
-      m : n%i
-      if m = 0 { return m i }
-    }
-    return m i
-}
-
-fun &lt;&gt; = main() {
-  for j:9 to 100 step 2 {
-    &lt;d,k&gt; : prime(j)
-    if d = 0 { ? j "has factor" k }
-    else { ? j "is a prime" }
-  }
-}</mutableString>
+</string>
                                 <color key="textColor" red="0.0" green="0.58980089430000004" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                 <fontDescription key="fontDescription" name="CourierNewPS-BoldMT" family="Courier New" pointSize="16"/>
                                 <textInputTraits key="textInputTraits" autocorrectionType="no" spellCheckingType="no"/>
@@ -311,11 +290,11 @@ fun &lt;&gt; = main() {
                             <constraint firstItem="7pn-D0-7tD" firstAttribute="trailing" secondItem="KD6-St-YIe" secondAttribute="trailing" constant="16" id="7mF-0P-7C1"/>
                             <constraint firstItem="5Uh-u8-0jA" firstAttribute="leading" secondItem="Gkn-N0-i70" secondAttribute="trailing" constant="8" id="8xm-eL-HoT"/>
                             <constraint firstItem="KD6-St-YIe" firstAttribute="leading" secondItem="7pn-D0-7tD" secondAttribute="leading" constant="16" id="INm-m6-b1R"/>
-                            <constraint firstItem="Gkn-N0-i70" firstAttribute="top" secondItem="7pn-D0-7tD" secondAttribute="top" constant="33" id="Nct-Fr-wWx"/>
+                            <constraint firstItem="Gkn-N0-i70" firstAttribute="top" secondItem="7pn-D0-7tD" secondAttribute="top" constant="8" id="Nct-Fr-wWx"/>
                             <constraint firstItem="Gkn-N0-i70" firstAttribute="leading" secondItem="7pn-D0-7tD" secondAttribute="leading" id="Slz-dc-DTq"/>
                             <constraint firstItem="7pn-D0-7tD" firstAttribute="bottom" secondItem="KD6-St-YIe" secondAttribute="bottom" constant="20" id="Uvy-wq-xcS"/>
                             <constraint firstItem="KD6-St-YIe" firstAttribute="top" secondItem="5Uh-u8-0jA" secondAttribute="bottom" constant="8" id="con-Tp-Prg"/>
-                            <constraint firstItem="5Uh-u8-0jA" firstAttribute="top" secondItem="7pn-D0-7tD" secondAttribute="top" constant="33" id="dv8-c3-2m2"/>
+                            <constraint firstItem="5Uh-u8-0jA" firstAttribute="top" secondItem="7pn-D0-7tD" secondAttribute="top" constant="8" id="dv8-c3-2m2"/>
                             <constraint firstItem="7pn-D0-7tD" firstAttribute="trailing" secondItem="5Uh-u8-0jA" secondAttribute="trailing" constant="16" id="ftr-Wd-th1"/>
                             <constraint firstItem="Gkn-N0-i70" firstAttribute="height" secondItem="5Uh-u8-0jA" secondAttribute="height" id="pQm-4V-8sK"/>
                             <constraint firstItem="5Uh-u8-0jA" firstAttribute="height" secondItem="KD6-St-YIe" secondAttribute="height" multiplier="2:1" id="rH2-Ed-1To"/>

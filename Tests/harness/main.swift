@@ -3,16 +3,22 @@
 //  Shalimar regression harness
 //
 //  A command-line driver for the language core, used by Tests/regression.sh.
-//  The core (Lexer/Parser/Interpreter) is pure Foundation with no UIKit
-//  dependency, so it compiles and runs outside the app - which is what makes a
-//  fast regression suite possible without an Xcode test target.
+//  The core (TokenKind/Node/Parse/Check/Interpreter) is pure Foundation with no
+//  UIKit dependency, so it compiles and runs outside the app - which is what
+//  makes a fast regression suite possible without an Xcode test target.
 //
 //  Mirrors ComputeViewController.ComputeTapped deliberately: lex, check
-//  lexError, parse, check parseError, then run. If that order ever drifts from
-//  the app, this harness stops testing what the app actually does.
+//  lexError, parse, check parseError, check, report diagnostics, then run. If
+//  that order ever drifts from the app, this harness stops testing what the app
+//  actually does.
+//
+//  The checker is the stage 3.0 added, and it behaves unlike the other two: it
+//  does not stop at the first problem, so every diagnostic is printed and only
+//  an error prevents the run. That is why warnings appear in the output of
+//  programs that still execute.
 //
 //  Usage:  shalimar <file.shm>
-//  Exit:   0 on a clean run, 1 on a lex or parse error.
+//  Exit:   0 on a clean run, 1 on a lex, parse or check error.
 //
 
 import Foundation
@@ -42,6 +48,15 @@ if let parseError = parser.parseError {
     exit(1)
 }
 
+let checker = Checker()
+let checkedAST = checker.check(ast)
+for diagnostic in checker.diagnostics {
+    print(diagnostic)
+}
+if checker.hasErrors {
+    exit(1)
+}
+
 let interpreter = Interpreter()
 interpreter.output = { print($0, terminator: "") }
-interpreter.runProgram(ast)
+interpreter.run(checkedAST)
