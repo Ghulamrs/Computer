@@ -69,11 +69,11 @@ fun <> = main() {
   ? "solved, det" d
   ? ab
 }
-// expected: inverse, det 9.0
-// expected:  1.4444444  -1.2222222  -0.5555556
-// expected: -0.7777778   0.8888889   0.2222222
-// expected:  0.3333333  -0.6666667   0.3333333
-// expected: singular, det 0.0
-// expected: solved, det 5.0
-// expected:  0.6000000  -0.2000000   0.2000000
-// expected: -0.2000000   0.4000000   0.6000000
+// expected: inverse, det 9.0000000
+// expected:  1.444444  -1.222222  -0.555556
+// expected: -0.777778   0.888889   0.222222
+// expected:  0.333333  -0.666667   0.333333
+// expected: singular, det 0.0000000
+// expected: solved, det 5.0000000
+// expected:  0.600000  -0.200000   0.200000
+// expected: -0.200000   0.400000   0.600000

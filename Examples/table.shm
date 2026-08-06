@@ -10,5 +10,5 @@ fun <> = main() {
     ? n*i
   }
 }
-// expected: table of 7.0
-// expected: 7.0 x 1.0 = 7.0 ... 7.0 x 10.0 = 70.0
+// expected: table of 7
+// expected: 7 x 1 = 7 ... 7 x 10 = 70

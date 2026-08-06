@@ -8,5 +8,5 @@ fun <> = main() {
   ? "factorial of" n
   ? "is" f
 }
-// expected: factorial of 10.0
-// expected: is 3628800.0
+// expected: factorial of 10
+// expected: is 3628800

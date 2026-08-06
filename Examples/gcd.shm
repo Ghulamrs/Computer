@@ -10,5 +10,5 @@ fun <> = main() {
   }
   ? "is" a
 }
-// expected: gcd of 48.0 18.0
-// expected: is 6.0
+// expected: gcd of 48 18
+// expected: is 6

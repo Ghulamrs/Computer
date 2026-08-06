@@ -14,4 +14,4 @@ fun <> = main() {
     ? "roots" x1 x2
   }
 }
-// expected: roots 2.0 3.0
+// expected: roots 2.0000000 3.0000000
