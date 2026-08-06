@@ -299,7 +299,10 @@ final class Checker {
 
         guard let targetType = target.type else {
             let type = infer(node.expr, line: node.line)
-            if type.rank > 0 && type.scalar != .char {
+            // An array normally cannot be created by assignment, because the extents
+            // cannot be known from an arbitrary expression. A literal is the exception:
+            // it carries its own shape, so there is nothing left to infer.
+            if type.rank > 0 && type.scalar != .char && !(node.expr is ArrayLiteralNode) {
                 error("Declare the array '\(target.root)' first", node.line)
             }
             define(target.root, type)

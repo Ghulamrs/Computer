@@ -401,7 +401,11 @@ class Parser {
         switch peekCurrentToken().kind {
         case .Assign:
             _ = popCurrentToken()
-            return AssignNode(target: target, op: .colon, expr: try parseExpression(), line: line)
+            // parseInitializer, not parseExpression: an assignment takes a brace literal
+            // exactly as a declaration does. It falls through to parseExpression when the
+            // right-hand side does not open with '{', so every other assignment is
+            // unaffected.
+            return AssignNode(target: target, op: .colon, expr: try parseInitializer(), line: line)
         case .PlusAssign:
             _ = popCurrentToken()
             return CompoundAssignNode(target: target, op: .add, expr: try parseExpression(), line: line)
@@ -410,7 +414,7 @@ class Parser {
             return CompoundAssignNode(target: target, op: .subtract, expr: try parseExpression(), line: line)
         case .Operator("="):
             _ = popCurrentToken()
-            return AssignNode(target: target, op: .equals, expr: try parseExpression(), line: line)
+            return AssignNode(target: target, op: .equals, expr: try parseInitializer(), line: line)
         default:
             index = start
             throw unexpected(peekCurrentToken().kind)

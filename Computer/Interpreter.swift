@@ -439,9 +439,15 @@ final class Interpreter {
                 return
             }
             let box = try lookup(name, line)
-            if case .array(let existing) = box.value, case .array = value,
-               existing.elements.first.map({ if case .char = $0 { return true } else { return false } }) ?? false {
-                for i in existing.elements.indices { existing.elements[i] = .char(0) }
+            // Copy into the storage the variable already has rather than rebinding it.
+            // Extents are fixed at declaration, and an array may be shared by reference
+            // with a caller - swapping the storage out would resize it under them.
+            if case .array(let existing) = box.value, case .array = value {
+                if existing.elements.first.map({
+                    if case .char = $0 { return true } else { return false }
+                }) ?? false {
+                    for i in existing.elements.indices { existing.elements[i] = .char(0) }
+                }
                 _ = try fit(value, into: box.value, line: line)
                 return
             }

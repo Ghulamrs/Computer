@@ -670,6 +670,47 @@ t "len() is never 0" "4" 'fun <> = main() { char s[4] : ""
 real w[len(s)]
 ? len(w) }'
 
+# --------------------------------------------------- array literals in assignment
+# A brace literal is accepted wherever a declaration accepts one. An array still cannot
+# be created from an arbitrary expression, because its extents could not be known - but
+# a literal carries its own shape, so that one case is allowed to create it.
+t "literal into a declared array" "1.000000  2.000000 3.000000  4.000000" 'fun <> = main() { real A[2][2]
+A : {{1.,2.},{3.,4.}}
+? A }'
+t "1-D literal in assignment" "1.000000  2.000000  3.000000" 'fun <> = main() { real v[3]
+v : {1.,2.,3.}
+? v }'
+t "int literal widens to real" "1.000000  2.000000" 'fun <> = main() { real A[1][2]
+A : {{1,2}}
+? A }'
+t "the = form takes one too" "7.000000  8.000000" 'fun <> = main() { real v[2]
+v = {7.,8.}
+? v }'
+t "a literal may create an array" "2 3" 'fun <> = main() { B : {{1.,2.,3.},{4.,5.,6.}}
+? B.row B.col }'
+t "a non-literal still may not" "Declare the array 'C' first" 'fun <> = main() { real A[2] : {1.,2.}
+C : A
+? C }'
+# The copy goes into the storage the variable already has: extents are fixed at
+# declaration, so assigning a smaller literal fills part of it rather than resizing it.
+t "assignment fits, never resizes" "3 3" 'fun <> = main() { real A[3][3]
+A : {{1.,2.},{3.,4.}}
+? A.row A.col }'
+# Which is what lets a by-reference parameter be filled from a literal - rebinding the
+# storage would have resized the caller'"'"'s array out from under it.
+t "literal into a reference param" "9.000000  9.000000 9.000000  9.000000" 'fun <> = fill(M[][]: real) {
+M : {{9.,9.},{9.,9.}}
+}
+fun <> = main() { real A[2][2]
+fill(A)
+? A }'
+t "scalar assignment unaffected" "6" 'fun <> = main() { x : 5
+x : x + 1
+? x }'
+t "string assignment unaffected" "hi" 'fun <> = main() { char s[8] : "abcdef"
+s : "hi"
+? s }'
+
 # ------------------------------------------------------------ printing an array as a grid
 # "? A" lays a numeric array out in columns, so a program needs no display function of its
 # own. Reals are fixed to 7 decimal places: a grid is read down its columns, and full
