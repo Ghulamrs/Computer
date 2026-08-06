@@ -68,7 +68,7 @@ let tokenList: [(String, TokenGenerator)] = [
     // Scanning it strictly would leave '1e' to split into the number 1 and an identifier
     // 'e', desyncing everything after it. Double is what actually arbitrates.
     ("[0-9][0-9.]*([eE][+-]?[0-9]*)?", { raw in
-        // An exponent always means a real: '1e10' does not fit 4 bytes, and exponent
+        // An exponent always means a real: '1e10' is far past an int's range, and exponent
         // notation is only ever reached for a magnitude an int could not carry anyway.
         if raw.contains(".") || raw.lowercased().contains("e") {
             guard let value = Double(raw), value.isFinite else {
@@ -138,7 +138,7 @@ class Lexer {
     }
 
     private func message(_ text: String) -> String {
-        return "Lex error: line \(tokenLine): \(text)"
+        return "Error: line \(tokenLine): \(text)"
     }
 
     func tokenize() -> [Token] {
@@ -159,10 +159,10 @@ class Lexer {
                     lexError = message("Malformed number '\(run)'")
                     return tokens
                 } catch LexIssue.integerOutOfRange(let run) {
-                    lexError = message("Integer literal '\(run)' does not fit 4 bytes (max \(Int32.max)). Write it as a real: '\(run).'")
+                    lexError = message("'\(run)' is too big for int - add '.'")
                     return tokens
                 } catch {
-                    lexError = message("'!' is not a command. Use '??' to print inline, '!=' for not-equal.")
+                    lexError = message("'!' is not a command - use '??' or '!='")
                     return tokens
                 }
 

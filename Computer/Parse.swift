@@ -7,6 +7,7 @@ extension Int {
 
 enum ParseError: Error, CustomStringConvertible {
     case UnexpectedToken(String)
+    case UnexpectedEndOfProgram
     case MissingOpeningBrace
     case MissingClosingBrace
     case PrintNotAtLineStart(String)
@@ -20,36 +21,38 @@ enum ParseError: Error, CustomStringConvertible {
     var message: String {
         switch self {
         case .UnexpectedToken(let tok):
-            return "Unexpected token '\(tok)'"
+            return "Unexpected '\(tok)'"
+        case .UnexpectedEndOfProgram:
+            return "Program ends unfinished"
         case .MissingOpeningBrace:
             return "Missing '{' to start block"
         case .MissingClosingBrace:
             return "Missing '}' to close block"
         case .PrintNotAtLineStart(let cmd):
-            return "'\(cmd)' must be the first thing on its line"
+            return "'\(cmd)' must start its line"
         case .DeclarationInSubScope(let name):
-            return "'\(name)' cannot be declared inside if/else/while/for - declare it at the top of the function or globally"
+            return "'\(name)': declare it at the top of the function"
         case .ReturnOutsideFunction:
             return "'return' outside a function"
         case .StatementInGlobalSpace(let tok):
-            return "Only declarations and 'fun' definitions may appear outside a function, found '\(tok)'"
+            return "'\(tok)' must be inside a function"
         case .UnknownAttribute(let name):
-            return "'.\(name)' is not an array attribute - use '.row', '.col' or '.dim(n)'"
+            return "No '.\(name)' - use .row, .col or .dim(n)"
         case .AttributeNotAssignable(let name):
-            return "'.\(name)' is read-only - it reports an array's shape, it cannot be assigned to"
+            return "'.\(name)' is read-only"
         case .DimNeedsAnAxis:
-            return "'.dim' needs an axis in parentheses, as '.dim(0)' - '.row' and '.col' are axes 0 and 1"
+            return "'.dim' needs an axis, as .dim(0)"
         }
     }
 
-    var description: String { "Parse error: \(message)" }
+    var description: String { "Error: \(message)" }
 }
 
 struct LocatedParseError: Error, CustomStringConvertible {
     let error: ParseError
     let line: Int
 
-    var description: String { "Parse error: line \(line): \(error.message)" }
+    var description: String { "Error: line \(line): \(error.message)" }
 }
 
 class Parser {
@@ -97,17 +100,25 @@ class Parser {
     private func consume(_ expected: TokenKind) throws -> Token {
         let token = peekCurrentToken()
         guard token.kind == expected else {
-            throw ParseError.UnexpectedToken(describe(token.kind))
+            throw unexpected(token.kind)
         }
         return popCurrentToken()
     }
 
     func readIdentifier() throws -> String {
         guard case let TokenKind.Identifier(name) = peekCurrentToken().kind else {
-            throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+            throw unexpected(peekCurrentToken().kind)
         }
         _ = popCurrentToken()
         return name
+    }
+
+    // Every diagnostic names what the programmer typed, never what the parser calls it.
+    // Running off the end has no spelling at all, so it gets its own sentence rather than
+    // a quoted stand-in.
+    private func unexpected(_ kind: TokenKind) -> ParseError {
+        if case .EndOfInput = kind { return .UnexpectedEndOfProgram }
+        return .UnexpectedToken(describe(kind))
     }
 
     // Every token spells itself the way the programmer wrote it. Falling back to
@@ -148,7 +159,7 @@ class Parser {
         case .Real:   return "real"
         case .Char:   return "char"
 
-        case .EndOfInput: return "end of input"
+        case .EndOfInput: return "end of program"
         }
     }
 
@@ -190,7 +201,7 @@ class Parser {
         case .Int:  _ = popCurrentToken(); return .int
         case .Real: _ = popCurrentToken(); return .real
         case .Char: _ = popCurrentToken(); return .char
-        default: throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+        default: throw unexpected(peekCurrentToken().kind)
         }
     }
 
@@ -360,7 +371,7 @@ class Parser {
             return try parseFor(line: line)
 
         default:
-            throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+            throw unexpected(peekCurrentToken().kind)
         }
     }
 
@@ -380,8 +391,8 @@ class Parser {
             target = .element(target, index: subscriptExpr)
         }
 
-        // A statement starting 'A.row' can only be an attempt to assign to the shape.
-        // Say so, rather than letting it fall through to a bare "Unexpected token '.'".
+        // A statement starting 'A.row' can only be an attempt to assign to a dimension.
+        // Say so, rather than letting it fall through to a bare "Unexpected '.'".
         if peekCurrentToken().kind == .Dot {
             _ = popCurrentToken()
             throw ParseError.AttributeNotAssignable((try? readIdentifier()) ?? "")
@@ -402,7 +413,7 @@ class Parser {
             return AssignNode(target: target, op: .equals, expr: try parseExpression(), line: line)
         default:
             index = start
-            throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+            throw unexpected(peekCurrentToken().kind)
         }
     }
 
@@ -543,16 +554,16 @@ class Parser {
         case .Identifier:
             return try parseIdentifierExpression()
 
-        // 'int' and 'real' are type keywords by the time the parser sees them, so
+        // The type keywords are already keywords by the time the parser sees them, so
         // 'int(x)' could never reach parseFunctionCall the way an identifier does - the
         // conversions were implemented on both sides and simply unreachable. In an
         // expression a type keyword can only be a conversion: a declaration is decided a
         // level up, in parseStatement, before parsePrimary is ever called.
-        case .Int, .Real:
+        case .Int, .Real, .Char:
             // Not a `where` clause on the case: in a comma-separated pattern list Swift
             // binds `where` to the last pattern only, so `.Int` would slip through it.
             guard peekNextToken().kind == .ParensOpen else {
-                throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+                throw unexpected(peekCurrentToken().kind)
             }
             let name = describe(popCurrentToken().kind)
             return try parseFunctionCall(callee: name)
@@ -574,7 +585,7 @@ class Parser {
             if let real = operand as? RealNode { return RealNode(value: -real.value) }
             return BinaryOpNode(op: .subtract, lhs: IntNode(value: 0), rhs: operand)
         default:
-            throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+            throw unexpected(peekCurrentToken().kind)
         }
     }
 
@@ -586,7 +597,7 @@ class Parser {
             : VariableNode(name: name)
 
         // '[' and '.' are both postfix, so they share one loop and chain in any order:
-        // 'M[k].row' asks for the shape of a row, 'A.dim(i)' for the shape of A.
+        // 'M[k].row' asks for the dimensions of a row, 'A.dim(i)' for those of A.
         postfix: while true {
             switch peekCurrentToken().kind {
             case .BracketOpen:
@@ -656,7 +667,7 @@ class Parser {
 
             guard case let TokenKind.Operator(spelling) = popCurrentToken().kind,
                   let op = BinaryOpNode.Op(rawValue: spelling) else {
-                throw ParseError.UnexpectedToken(describe(peekCurrentToken().kind))
+                throw unexpected(peekCurrentToken().kind)
             }
 
             var rhs = try parsePrimary()
@@ -737,7 +748,7 @@ class Parser {
         switch tokens[position].kind {
         case .IntLiteral, .RealLiteral, .StringLiteral, .Identifier, .ParensOpen: return true
         case .Operator(let op): return op == "-"
-        case .Int, .Real:
+        case .Int, .Real, .Char:
             return position + 1 < tokens.count && tokens[position + 1].kind == .ParensOpen
         default: return false
         }

@@ -53,6 +53,21 @@ final class Checker {
         "len": Builtin(inputs: [.array(.real)], output: .int, generic: true),
         "int":  Builtin(inputs: [.real], output: .int, generic: false),
         "real": Builtin(inputs: [.int], output: .real, generic: false),
+        "char": Builtin(inputs: [.int], output: .char, generic: false),
+    ]
+
+    // Read-only and reserved: 'pi' cannot be declared, assigned, or taken as a parameter
+    // name. 2.x resolved constants last, behind locals and globals, so a variable of the
+    // same name shadowed them - but with a checker that defines on first assignment, that
+    // arrangement means 'pi : 3' silently overwrites the constant instead of shadowing it.
+    // One name, one meaning, and a diagnostic that says so.
+    private static let constants: [String: ShalimarType] = ["pi": .real]
+
+    // The three conversions are handled as a group: each takes any scalar and produces
+    // the type it is named for. Their declared input types above exist only to give the
+    // arity check something to count - checkBuiltinCall never coerces to them.
+    private static let conversions: [String: ShalimarType] = [
+        "int": .int, "real": .real, "char": .char,
     ]
 
     func check(_ program: [Node]) -> [Node] {
@@ -69,7 +84,7 @@ final class Checker {
 
         let called = collectCalledNames(program)
         for name in prototypes.keys.sorted() where name != "main" && !called.contains(name) {
-            warn("function '\(name)' is defined but never called", prototypes[name]?.line ?? 1)
+            warn("'\(name)' is never called", prototypes[name]?.line ?? 1)
         }
 
         return program.map { node in
@@ -86,15 +101,14 @@ final class Checker {
                 continue
             }
             if Checker.builtins[name] != nil {
-                error("Function '\(name)' shadows a builtin of the same name", function.line)
+                error("'\(name)' is a built-in name", function.line)
                 continue
             }
             // The parser reads 'prec(' in a print list as the precision directive before
             // it could ever resolve to this function, so the definition would be silently
             // unreachable there. Refuse it rather than let the two spellings diverge.
             if name.lowercased() == "prec" {
-                error("Function 'prec' clashes with the print precision directive "
-                      + "'? prec(n)' - choose another name", function.line)
+                error("'prec' is reserved for '? prec(n)'", function.line)
                 continue
             }
             prototypes[name] = function.prototype
@@ -103,6 +117,7 @@ final class Checker {
 
     private func collectGlobals(_ program: [Node]) {
         for case let declaration as DeclareNode in program {
+            if refuseConstant(declaration.name, "declared", declaration.line) { continue }
             if globals[declaration.name] != nil {
                 error("Variable '\(declaration.name)' already defined", declaration.line)
                 continue
@@ -146,7 +161,14 @@ final class Checker {
         for scope in scopes.reversed() {
             if let type = scope[name] { return type }
         }
-        return globals[name]
+        return globals[name] ?? Checker.constants[name]
+    }
+
+    // Returns true (having reported) when a name is a constant being reused as a variable.
+    private func refuseConstant(_ name: String, _ role: String, _ line: Int) -> Bool {
+        guard Checker.constants[name] != nil else { return false }
+        error("'\(name)' is a constant", line)
+        return true
     }
 
     private func isLocal(_ name: String) -> Bool {
@@ -160,8 +182,8 @@ final class Checker {
 
     private func checkDeclaredType(_ declaration: DeclareNode) {
         guard declaration.type.isWellFormed else {
-            error("'\(declaration.name)': \(declaration.type) is not a legal type"
-                  + (declaration.type.scalar == .char ? " - strings are one-dimensional" : ""),
+            error("'\(declaration.name)': \(declaration.type)"
+                  + (declaration.type.scalar == .char ? " - strings are 1-D" : " is not a legal type"),
                   declaration.line)
             return
         }
@@ -173,11 +195,12 @@ final class Checker {
         defer { currentPrototype = nil; scopes = [] }
 
         for parameter in function.prototype.inputs {
+            _ = refuseConstant(parameter.name, "used as a parameter name", function.line)
             if scopes[0][parameter.name] != nil {
                 error("Parameter '\(parameter.name)' already defined", function.line)
             }
             if !parameter.type.isWellFormed {
-                error("Parameter '\(parameter.name)': \(parameter.type) is not a legal type", function.line)
+                error("'\(parameter.name)': \(parameter.type) is not a legal type", function.line)
             }
             scopes[0][parameter.name] = parameter.type
         }
@@ -185,9 +208,7 @@ final class Checker {
         let body = function.body.map { checkStatement($0) }
 
         if !function.prototype.outputs.isEmpty && !alwaysReturns(body) {
-            error("'\(function.prototype.name)' declares \(function.prototype.returnCount) "
-                  + "output\(function.prototype.returnCount == 1 ? "" : "s") but can finish without a return",
-                  function.line)
+            error("'\(function.prototype.name)' can finish without a return", function.line)
         }
 
         return FunctionNode(prototype: function.prototype, body: body)
@@ -225,10 +246,13 @@ final class Checker {
     private func checkDeclaration(_ node: DeclareNode) -> StmtNode {
         checkDeclaredType(node)
 
+        if refuseConstant(node.name, "declared", node.line) {
+            return node
+        }
         if isLocal(node.name) {
             error("Variable '\(node.name)' already defined", node.line)
         } else if globals[node.name] != nil {
-            warn("'\(node.name)' shadows a global of the same name", node.line)
+            warn("'\(node.name)' hides a global", node.line)
         }
 
         let sizes = node.sizes.map { checkSize($0, of: node.name, line: node.line) }
@@ -245,13 +269,13 @@ final class Checker {
     private func checkSize(_ expr: ExprNode, of name: String, line: Int) -> ExprNode {
         let inferred = infer(expr, line: line)
         guard inferred == .int else {
-            error("'\(name)': array size must be an int, not \(inferred)", line)
+            error("'\(name)': size must be int, not \(inferred)", line)
             return rewrite(expr, line: line)
         }
 
         let checked = rewrite(expr, line: line)
         if let constant = constantInt(checked), constant < 1 {
-            error("'\(name)': array size must be at least 1, got \(constant)", line)
+            error("'\(name)': size must be 1 or more, got \(constant)", line)
         }
         return checked
     }
@@ -271,11 +295,12 @@ final class Checker {
 
     private func checkAssign(_ node: AssignNode) -> StmtNode {
         let target = resolveTarget(node.target, line: node.line)
+        if refuseConstant(target.root, "assigned to", node.line) { return node }
 
         guard let targetType = target.type else {
             let type = infer(node.expr, line: node.line)
             if type.rank > 0 && type.scalar != .char {
-                error("'\(target.root)' cannot be created by assignment - declare the array first", node.line)
+                error("Declare the array '\(target.root)' first", node.line)
             }
             define(target.root, type)
             return AssignNode(target: node.target, op: node.op,
@@ -288,12 +313,25 @@ final class Checker {
 
     private func checkCompoundAssign(_ node: CompoundAssignNode) -> StmtNode {
         let target = resolveTarget(node.target, line: node.line)
+        if refuseConstant(target.root, "assigned to", node.line) { return node }
         guard let targetType = target.type else {
             error("Undefined variable '\(target.root)'", node.line)
             return node
         }
+        // '+:' on a string appends, which is how one gets built in a loop. '-:' has no
+        // meaning there, and neither does either operator on any other array.
+        if targetType == .array(.char) {
+            guard node.op == .add else {
+                error("'\(node.op.rawValue)' does not apply to strings", node.line)
+                return node
+            }
+            return CompoundAssignNode(target: node.target, op: node.op,
+                                      expr: coerce(node.expr, to: .array(.char), line: node.line),
+                                      line: node.line)
+        }
+
         if targetType.rank > 0 {
-            error("'\(target.root)' is \(targetType); \(node.op.rawValue) needs a scalar", node.line)
+            error("'\(node.op.rawValue)' needs a single value", node.line)
         }
         return CompoundAssignNode(target: node.target, op: node.op,
                                   expr: coerce(node.expr, to: targetType, line: node.line),
@@ -309,8 +347,7 @@ final class Checker {
             // the target undeclared and the next line reporting it as undefined.
             if Checker.builtins[node.call.callee] != nil {
                 if node.targets.count != 1 {
-                    error("'\(node.call.callee)' returns 1, but \(node.targets.count) "
-                          + "variable\(node.targets.count == 1 ? "" : "s") listed", node.line)
+                    error("'\(node.call.callee)' returns 1, not \(node.targets.count)", node.line)
                 }
                 if let first = node.targets.first {
                     let resolved = resolveTarget(first, line: node.line)
@@ -320,15 +357,13 @@ final class Checker {
             return MultiAssignNode(targets: node.targets, call: call, line: node.line)
         }
         if prototype.returnCount != node.targets.count {
-            error("'\(prototype.name)' returns \(prototype.returnCount), "
-                  + "but \(node.targets.count) variable\(node.targets.count == 1 ? "" : "s") listed", node.line)
+            error("'\(prototype.name)' returns \(prototype.returnCount), not \(node.targets.count)", node.line)
         }
         for (i, target) in node.targets.enumerated() where i < prototype.outputs.count {
             let resolved = resolveTarget(target, line: node.line)
             if let existing = resolved.type {
                 if existing != prototype.outputs[i] {
-                    error("'\(resolved.root)' is \(existing) but '\(prototype.name)' returns "
-                          + "\(prototype.outputs[i]) in position \(i + 1)", node.line)
+                    error("'\(resolved.root)' is \(existing), not \(prototype.outputs[i])", node.line)
                 }
             } else {
                 define(resolved.root, prototype.outputs[i])
@@ -341,8 +376,7 @@ final class Checker {
         let prototype = node.prototype
 
         guard node.exprs.count == prototype.returnCount else {
-            error("'\(prototype.name)' declares \(prototype.returnCount) output"
-                  + "\(prototype.returnCount == 1 ? "" : "s") but this return has \(node.exprs.count)",
+            error("'\(prototype.name)' returns \(prototype.returnCount) values, not \(node.exprs.count)",
                   node.line)
             return node
         }
@@ -378,7 +412,7 @@ final class Checker {
             counterType = widest(counterType, infer(step, line: node.line))
         }
         if counterType.rank > 0 {
-            error("A loop counter must be a scalar, not \(counterType)", node.line)
+            error("Loop counter cannot be \(counterType)", node.line)
             counterType = .int
         }
 
@@ -386,6 +420,7 @@ final class Checker {
         let end = coerce(node.end, to: counterType, line: node.line)
         let step = node.step.map { coerce($0, to: counterType, line: node.line) }
 
+        _ = refuseConstant(node.variable, "used as a loop counter", node.line)
         scopes.append([node.variable: counterType])
         let body = node.body.map { checkStatement($0) }
         scopes.removeLast()
@@ -403,7 +438,7 @@ final class Checker {
     private func checkCondition(_ expr: ExprNode, line: Int) -> ExprNode {
         let type = infer(expr, line: line)
         if type.rank > 0 {
-            error("A condition must be a scalar, not \(type)", line)
+            error("Condition cannot be \(type)", line)
         }
         return rewrite(expr, line: line)
     }
@@ -468,16 +503,16 @@ final class Checker {
 
         // Always int, whatever the array holds. An axis the array does not have answers
         // -1 rather than failing, so '.col' is a usable question to ask of a vector; only
-        // asking a *scalar* for its shape is an error, because that is a type confusion
+        // asking a *scalar* for its dimensions is an error, because that is a type confusion
         // and not a rank one.
         case let node as DimNode:
             let baseType = infer(node.base, line: line)
             if baseType.rank == 0 {
-                error("\(baseType) has no dimensions - '.\(node.spelling)' needs an array", line)
+                error("'.\(node.spelling)' needs an array, not \(baseType)", line)
             }
             let axisType = infer(node.axis, line: line)
             if axisType != .int {
-                error("'.\(node.spelling)' needs an int axis, not \(axisType)", line)
+                error("Axis must be int, not \(axisType)", line)
             }
             return .int
 
@@ -486,13 +521,28 @@ final class Checker {
         case let node as PrecisionNode:
             let places = infer(node.places, line: line)
             if places != .int {
-                error("prec() needs an int number of places, not \(places)", line)
+                error("prec() needs an int, not \(places)", line)
             }
             return .int
 
         case let node as BinaryOpNode:
             let lhs = infer(node.lhs, line: line)
             let rhs = infer(node.rhs, line: line)
+
+            // Two strings are the one array pairing the operators accept. Comparison
+            // reads the text up to the terminator, never the declared capacity, so a
+            // name in a char[20] equals the same name in a char[128]. '+' joins them
+            // into a fresh string sized to the result.
+            if lhs == .array(.char) && rhs == .array(.char) {
+                switch node.op {
+                case .equal, .notEqual, .less, .greater: return .int
+                case .add: return .array(.char)
+                default:
+                    error("'\(node.op.rawValue)' does not apply to strings", line)
+                    return .int
+                }
+            }
+
             if lhs.rank > 0 || rhs.rank > 0 {
                 error("'\(node.op.rawValue)' needs scalars, got \(lhs) and \(rhs)", line)
                 return .int
@@ -594,8 +644,7 @@ final class Checker {
         }
         guard let prototype = prototypes[node.callee] else {
             if node.callee.lowercased() == "prec" {
-                error("'prec' sets print precision and belongs in a print list, "
-                      + "as '? prec(10)'", node.line)
+                error("'prec' belongs after '?'", node.line)
             } else {
                 error("Unknown function '\(node.callee)'", node.line)
             }
@@ -603,8 +652,7 @@ final class Checker {
         }
 
         if node.arguments.count != prototype.arity {
-            error("'\(prototype.name)' expects \(prototype.arity) argument"
-                  + "\(prototype.arity == 1 ? "" : "s"), got \(node.arguments.count)", node.line)
+            error("'\(prototype.name)' takes \(prototype.arity), got \(node.arguments.count)", node.line)
         }
 
         var arguments: [ExprNode] = []
@@ -617,14 +665,11 @@ final class Checker {
 
             if parameter.byReference {
                 if !argument.isAddressable {
-                    error("Argument \(i + 1) of '\(prototype.name)' is by reference and needs a "
-                          + "variable, not a value", node.line)
+                    error("Argument \(i + 1) of '\(prototype.name)' needs a variable", node.line)
                 }
                 let actual = infer(argument, line: node.line)
                 if actual != parameter.type {
-                    error("Argument \(i + 1) of '\(prototype.name)' is \(actual) but "
-                          + "'\(parameter.name)' is \(parameter.type) by reference - "
-                          + "a reference argument cannot be converted", node.line)
+                    error("Argument \(i + 1) of '\(prototype.name)' must be \(parameter.type)", node.line)
                 }
                 arguments.append(rewrite(argument, line: node.line))
             } else {
@@ -638,8 +683,7 @@ final class Checker {
 
     private func checkBuiltinCall(_ node: CallNode, _ builtin: Builtin, line: Int) -> (call: CallNode, type: ShalimarType) {
         if node.arguments.count != builtin.inputs.count {
-            error("Function '\(node.callee)' expects \(builtin.inputs.count) argument"
-                  + "\(builtin.inputs.count == 1 ? "" : "s"), got \(node.arguments.count)", node.line)
+            error("'\(node.callee)' takes \(builtin.inputs.count), got \(node.arguments.count)", node.line)
             guard node.arguments.count > builtin.inputs.count else { return (node, builtin.output) }
         }
 
@@ -657,16 +701,16 @@ final class Checker {
         // untouched. Coercing it to the declared input type first would run it through
         // the opposite conversion on the way in - 'real(2.7)' would be narrowed to 2 and
         // then widened back to 2.0, truncating the value the call exists to preserve.
-        if node.callee == "int" || node.callee == "real" {
+        if let target = Checker.conversions[node.callee] {
             let actual = infer(node.arguments[0], line: node.line)
-            guard actual == .int || actual == .real else {
-                error("\(node.callee)() needs an int or a real, got \(actual)", node.line)
-                return (node, node.callee == "int" ? .int : .real)
+            guard actual.rank == 0 else {
+                error("\(node.callee)() needs one value, not \(actual)", node.line)
+                return (node, target)
             }
             return (CallNode(callee: node.callee,
                              arguments: [rewrite(node.arguments[0], line: node.line)],
                              line: node.line),
-                    node.callee == "int" ? .int : .real)
+                    target)
         }
 
         if builtin.generic {

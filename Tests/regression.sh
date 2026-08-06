@@ -67,10 +67,10 @@ fun <> = main() { <a,b,c> : f()
 t "multi-value return needs parens" "1 2" 'fun <int,int> = f() { return (1,2) }
 fun <> = main() { <a,b> : f()
 ? a b }'
-t "return arity must match outputs" "declares 0 outputs but this return has 3" 'fun <> = f() { return (1,2,3) }
+t "return arity must match outputs" "'f' returns 0 values, not 3" 'fun <> = f() { return (1,2,3) }
 fun <> = main() { f()
 ? 1 }'
-t "declared output needs a return" "declares 1 output but can finish without a return" 'fun <int> = f() { int y : 9 }
+t "declared output needs a return" "can finish without a return" 'fun <int> = f() { int y : 9 }
 fun <> = main() {
 ? f() }'
 t "fresh local scope" "Undefined variable 'k'" 'fun <int> = f() { return k }
@@ -82,14 +82,14 @@ t "duplicate definition" "already defined" 'fun <> = g() { return 1 }
 fun <> = g() { return 2 }
 fun <> = main() {
 ? g() }'
-t "unused function warns" "defined but never called" 'fun <int> = unused() { return 1 }
+t "unused function warns" "is never called" 'fun <int> = unused() { return 1 }
 fun <> = main() {
 ? 42 }'
 
 # --------------------------------------------------------------- 5.6 calls / args
-# 3.0: a user function may not take a builtin's name at all. 2.x resolved the clash
-# silently in the builtin's favour, so the definition was dead code with no warning.
-t "user fn cannot shadow a builtin" "shadows a builtin of the same name" 'fun <real> = sqrt(x: real) { return 999. }
+# 3.0: a user function may not take a built-in's name at all. 2.x resolved the clash
+# silently in the built-in's favour, so the definition was dead code with no warning.
+t "user fn cannot reuse a builtin name" "is a built-in name" 'fun <real> = sqrt(x: real) { return 999. }
 fun <> = main() {
 ? sqrt(16.) }'
 t "builtin rejects string arg" "Cannot use char[] where real is required" 'fun <> = main() {
@@ -97,26 +97,26 @@ t "builtin rejects string arg" "Cannot use char[] where real is required" 'fun <
 # Under-supplying a builtin used to trap on args[0] and take the whole app down
 # (SIGTRAP, uncatchable, no diagnostic). 3.0 catches it a stage earlier still - the
 # checker refuses the program, so nothing runs at all.
-t "builtin too few args, 1-arity" "expects 1 argument, got 0" 'fun <> = main() {
+t "builtin too few args, 1-arity" "'sqrt' takes 1, got 0" 'fun <> = main() {
 ? sqrt() }'
-t "builtin too few args, 2-arity" "expects 2 arguments, got 1" 'fun <> = main() {
+t "builtin too few args, 2-arity" "'pow' takes 2, got 1" 'fun <> = main() {
 ? pow(2.) }'
-t "builtin too few args, zero-arity call" "expects 2 arguments, got 0" 'fun <> = main() {
+t "builtin too few args, zero-arity call" "'atan2' takes 2, got 0" 'fun <> = main() {
 ? atan2() }'
-t "builtin under-supply is a check error" "Function 'min' expects 2 arguments, got 1" 'fun <> = main() {
+t "builtin under-supply is a check error" "'min' takes 2, got 1" 'fun <> = main() {
 ? "before"
 ? min(1.) }'
 # 3.0: surplus arguments are an error. 2.x warned and dropped them, which meant a
 # call with the arguments in the wrong order still ran and returned a wrong number.
-t "builtin extra args rejected" "expects 1 argument, got 2" 'fun <> = main() {
+t "builtin extra args rejected" "'sqrt' takes 1, got 2" 'fun <> = main() {
 ? sqrt(16.,99.) }'
-t "too few args errors" "expects 2 arguments, got 1" 'fun <real> = f(a: real, b: real) { return a+b }
+t "too few args errors" "'f' takes 2, got 1" 'fun <real> = f(a: real, b: real) { return a+b }
 fun <> = main() {
 ? f(1.) }'
-t "extra args rejected" "expects 1 argument, got 2" 'fun <int> = f(a: int) { return a }
+t "extra args rejected" "'f' takes 1, got 2" 'fun <int> = f(a: int) { return a }
 fun <> = main() {
 ? f(1,2) }'
-t "zero args supplied" "expects 1 argument, got 0" 'fun <int> = f(a: int) { return a }
+t "zero args supplied" "'f' takes 1, got 0" 'fun <int> = f(a: int) { return a }
 fun <> = main() {
 ? f() }'
 t "expression as argument" "9" 'fun <int> = f(a: int) { return a }
@@ -157,7 +157,7 @@ fun <int> = d() { return e() }
 fun <int> = e() { return a() }
 fun <> = main() {
 ? a() }'
-t "runaway recursion reports, not crashes" "before  Runtime error: line 1: Recursion too deep" 'fun <int> = d(n: int) { return d(n+1) }
+t "runaway recursion reports, not crashes" "before  Error: line 1: Recursion too deep" 'fun <int> = d(n: int) { return d(n+1) }
 fun <> = main() {
 ? "before"
 ? d(1) }'
@@ -186,10 +186,10 @@ fun <> = main() { sq(4)
 t "multi-assign captures both" "3 9" 'fun <int,int> = p() { return (3,9) }
 fun <> = main() { <d,k> : p()
 ? d k }'
-t "too few targets is an error" "returns 2, but 1 variable listed" 'fun <int,int> = f() { return (1,2) }
+t "too few targets is an error" "returns 2, not 1" 'fun <int,int> = f() { return (1,2) }
 fun <> = main() { <a> : f()
 ? a }'
-t "too many targets is an error" "returns 1, but 2 variables listed" 'fun <int> = f() { return 1 }
+t "too many targets is an error" "returns 1, not 2" 'fun <int> = f() { return 1 }
 fun <> = main() { <a,b> : f()
 ? a }'
 t "bare return from a 0-output fn" "5" 'fun <> = f() { return }
@@ -199,7 +199,7 @@ fun <> = main() { f()
 # entirely - '<s> : sqrt(16.)' left s undeclared and the next line called it undefined.
 t "builtin single multi-assign" "4.0" 'fun <> = main() { <s> : sqrt(16.)
 ? s }'
-t "builtin multi-assign arity" "returns 1, but 2 variables listed" 'fun <> = main() { <s,t> : sqrt(16.)
+t "builtin multi-assign arity" "returns 1, not 2" 'fun <> = main() { <s,t> : sqrt(16.)
 ? s }'
 t "builtin multi-assign into declared" "4.0" 'fun <> = main() { real s : 0.
 <s> : sqrt(16.)
@@ -215,7 +215,7 @@ t "declared string" "abc" 'fun <> = main() { char s[8] : "abc"
 ? s }'
 t "string in arithmetic is a type error" "needs scalars, got int and char[]" 'fun <> = main() {
 ? 1 + "a" }'
-t "string as a condition is a type error" "A condition must be a scalar, not char[]" 'fun <> = main() { if "a" {
+t "string as a condition is a type error" "Condition cannot be char[]" 'fun <> = main() { if "a" {
 ? 1 } else {
 ? 2 } }'
 t "string as scalar arg is a type error" "Cannot use char[] where int is required" 'fun <int> = f(a: int) { return a }
@@ -225,6 +225,103 @@ t "string prints literally" "ok" 'fun <> = main() {
 ? "ok" }'
 t "non-ASCII allowed in string" "wörld" 'fun <> = main() {
 ? "héllo wörld" }'
+
+# ------------------------------------------------------------------ pi constant
+# 2.x had 'pi' and 'e' and resolved them last, behind locals and globals, so a variable
+# of the same name shadowed the constant. 3.0 makes pi genuinely read-only instead: with
+# a checker that defines a variable on first assignment, a shadowable constant means
+# 'pi : 3' quietly overwrites it rather than shadowing it. One name, one meaning.
+t "pi reads at default precision" "3.1415927" 'fun <> = main() {
+? pi }'
+t "pi carries full precision" "3.141592653589793" 'fun <> = main() {
+? prec(15) pi }'
+t "pi in arithmetic" "12.5663706" 'fun <> = main() { real r : 2.
+? pi * r * r }'
+t "degrees to radians" "1.0000000" 'fun <> = main() { real d : 90.
+? sin(d * pi / 180.) }'
+t "pi cannot be assigned" "'pi' is a constant" 'fun <> = main() { pi : 3.
+? pi }'
+t "pi cannot be declared" "'pi' is a constant" 'fun <> = main() { real pi : 3.
+? pi }'
+t "pi cannot be a global" "'pi' is a constant" 'real pi : 3.
+fun <> = main() {
+? pi }'
+t "pi cannot be a parameter" "'pi' is a constant" 'fun <> = f(pi: real) {
+? pi }
+fun <> = main() { f(1.) }'
+t "pi cannot be a loop counter" "'pi' is a constant" 'fun <> = main() { for pi < 3 {
+?? pi }
+? "" }'
+# 'e' is deliberately not restored: exponent notation now owns that letter next to a
+# digit, and a bare 'e' beside numbers reads as a typo for 1e5 rather than as Euler.
+t "e is not a constant" "Undefined variable 'e'" 'fun <> = main() {
+? e }'
+
+# ------------------------------------------- strings: compare, order, concatenate
+# Two strings are the one array pairing the operators accept. Comparison reads the text
+# up to the terminator and never the declared capacity, so the same name in a char[20]
+# and a char[128] is equal - without that, buffer size would leak into meaning.
+t "equal across capacities" "equal" 'fun <> = main() { char a[20] : "bob"
+char b[128] : "bob"
+if a = b {
+? "equal" } }'
+t "not equal" "different" 'fun <> = main() { char a[20] : "bob"
+if a != "alice" {
+? "different" } }'
+t "ordering" "alice before bob" 'fun <> = main() { char a[20] : "alice"
+char b[20] : "bob"
+if a < b {
+? "alice before bob" } }'
+t "a prefix orders first" "ann before anna" 'fun <> = main() { char a[20] : "ann"
+if a < "anna" {
+? "ann before anna" } }'
+# Ordering is by byte, so uppercase sorts before lowercase. Conventional, and the reason
+# a name list wants folding to one case first - recorded so it is not a surprise later.
+t "ordering is ASCII, not alphabetic" "uppercase first" 'fun <> = main() {
+if "Zoe" < "adam" {
+? "uppercase first" } }'
+t "concatenate two strings" "hello world" 'fun <> = main() { char a[20] : "hello "
+char b[20] : "world"
+? a + b }'
+t "concatenate with a literal" "Dr. Akhtar" 'fun <> = main() { char a[20] : "Dr. "
+? a + "Akhtar" }'
+t "assign a joined result" "abcd" 'fun <> = main() { char a[8] : "ab"
+char c[20]
+c : a + "cd"
+? c }'
+# The result is sized to the text, but landing it in a buffer still fits the buffer.
+t "joining truncates to capacity" "abc" 'fun <> = main() { char a[20] : "abcdef"
+char small[4]
+small : a + "ghi"
+? small }'
+t "append with +:" "abc" 'fun <> = main() { char s[32] : "a"
+s +: "b"
+s +: "c"
+? s }'
+t "build a string in a loop" "xyxyxy" 'fun <> = main() { char s[32] : ""
+char d[8] : "xy"
+for i < 3 {
+s +: d }
+? s }'
+t "strings are assignable whole" "alice bob" 'fun <> = main() { char a[20] : "bob"
+char b[20] : "alice"
+char t[20]
+t : a
+a : b
+b : t
+? a b }'
+# Only those five operators, only on two strings - everything else stays refused.
+t "subtraction is refused" "does not apply to strings" 'fun <> = main() { char a[8] : "ab"
+? a - "b" }'
+t "-: on a string is refused" "'-:' does not apply to strings" 'fun <> = main() { char a[8] : "ab"
+a -: "b" }'
+t "string plus number is refused" "needs scalars, got char[] and int" 'fun <> = main() { char a[8] : "ab"
+? a + 1 }'
+t "numeric arrays still refused" "needs scalars, got real[] and real[]" 'fun <> = main() { real v[2] : {1.,2.}
+? v + v }'
+# A list of names is still not expressible: char is one-dimensional by design.
+t "no array of strings" "strings are 1-D" 'fun <> = main() { char names[3][20]
+? 1 }'
 
 # -------------------------------------------------------- 2.2 lexer / ASCII rule
 t "underscore identifier" "7" 'fun <> = main() { _foo : 7
@@ -308,14 +405,14 @@ t "prec clamps above 24" "1.000000000000000000000000" 'fun <> = main() {
 t "prec clamps below -1" "1.000  1.0000000" 'fun <> = main() {
 ? prec(3) 1.
 ? prec(0-5) 1. }'
-t "prec rejects a real" "needs an int number of places" 'fun <> = main() {
+t "prec rejects a real" "prec() needs an int" 'fun <> = main() {
 ? prec(2.5) 1. }'
 # Contextual: only 'prec(' in a print list is the directive.
 t "prec is still a usable name" "9" 'fun <> = main() { prec : 9
 ? prec }'
-t "prec outside a print list" "belongs in a print list" 'fun <> = main() { prec(3)
+t "prec outside a print list" "belongs after '?'" 'fun <> = main() { prec(3)
 ? 1. }'
-t "a function named prec is refused" "clashes with the print precision directive" 'fun <int> = prec(n: int) { return n }
+t "a function named prec is refused" "reserved for '? prec(n)'" 'fun <int> = prec(n: int) { return n }
 fun <> = main() {
 ? 1. }'
 t "int and real print differently" "42 42.0" 'fun <> = main() {
@@ -348,9 +445,9 @@ real x : 2.9
 t "int() in a return" "9" 'fun <int> = f(x: real) { return int(x) }
 fun <> = main() {
 ? f(9.8) }'
-t "int() rejects an array" "needs an int or a real, got real[]" 'fun <> = main() { real A[2] : {1.,2.}
+t "int() rejects an array" "needs one value, not real[]" 'fun <> = main() { real A[2] : {1.,2.}
 ? int(A) }'
-t "int() rejects a string" "needs an int or a real, got char[]" 'fun <> = main() {
+t "int() rejects a string" "needs one value, not char[]" 'fun <> = main() {
 ? int("hi") }'
 t "int() out of range reports" "Cannot convert" 'fun <> = main() {
 ? int(pow(10.,30.)) }'
@@ -365,10 +462,69 @@ t "declaration after a print" "1  5" 'fun <> = main() { x : 1
 ? x
 int k : 5
 ? k }'
-t "bare int is still an error" "Parse error" 'fun <> = main() {
+t "bare int is still an error" "Unexpected" 'fun <> = main() {
 ? int }'
+# int(c) and char(n) are the bridge between a character and its code point. Without
+# them nothing character-specific was expressible: a char could be compared to another
+# char but never named, so testing for a space or a digit had no spelling at all.
+t "int() of a char is its code" "65" 'fun <> = main() { char s[8] : "A"
+? int(s[0]) }'
+t "char() of a code" "A" 'fun <> = main() {
+? char(65) }'
+t "conversion round trip" "Q" 'fun <> = main() { char s[8] : "Q"
+? char(int(s[0])) }'
+t "arithmetic on code points" "A" 'fun <> = main() { char s[8] : "a"
+? char(int(s[0]) - 32) }'
+t "real() of a char" "65.0000000" 'fun <> = main() { char s[8] : "A"
+? real(s[0]) }'
+t "char() truncates a real" "A" 'fun <> = main() {
+? char(65.9) }'
+# char(0) names the terminator, which previously had no spelling but an uninitialised
+# variable - that made the end of a string impossible to test for readably.
+t "char(0) is the terminator" "terminator found" 'fun <> = main() { char nul : char(0)
+char s[8] : "ab"
+if s[2] = nul {
+? "terminator found" } }'
+# A char is one byte, so the narrowing is range-checked rather than wrapped: a wrapped
+# code point is a wrong character that looks like a right one.
+t "char() rejects 256" "256 is not a char (0 to 255)" 'fun <> = main() {
+? char(256) }'
+t "char() rejects a negative" "-1 is not a char (0 to 255)" 'fun <> = main() {
+? char(0-1) }'
+t "char() rejects an array" "needs one value, not char[]" 'fun <> = main() { char s[8] : "ab"
+? char(s) }'
+t "char declaration untouched" "ab a" 'fun <> = main() { char s[4] : "ab"
+char c : s[0]
+? s c }'
+# The type wall stays: chars convert on request, they never mix into arithmetic.
+t "char still rejects arithmetic" "Cannot use int where char is required" 'fun <> = main() { char s[8] : "A"
+? s[0] + 1 }'
+# What the conversions unlock, end to end - upper() cannot be written without them.
+t "upper() over a string" "HELLO" 'fun <int> = length(t[]: char) {
+char nul : char(0)
+int n : 0
+for i < t.row {
+if t[i] != nul {
+if n = i { n : i + 1 }
+}
+}
+return n
+}
+fun <> = upper(t[]: char) {
+int a : int(char(97))
+int c : 0
+for i < length(t) {
+c : int(t[i])
+if c > a - 1 & c < a + 26 {
+t[i] : char(c - 32)
+}
+}
+}
+fun <> = main() { char s[16] : "hello"
+upper(s)
+? s }'
 
-# ----------------------------------------------------- array shape: .row/.col/.dim
+# ------------------------------------------------ array dimensions: .row/.col/.dim
 # '.row' is axis 0 and '.col' is axis 1 whatever the rank, with '.dim(n)' for the
 # rest. An axis the array does not have answers -1 rather than failing, so asking a
 # vector for its columns is a legal question with a recognizable answer.
@@ -392,24 +548,24 @@ t "attribute chains off a subscript" "4" 'fun <> = main() { real A[3][4]
 ? A[0].row }'
 t "string length is capacity" "8 -1" 'fun <> = main() { char s[8] : "abc"
 ? s.row s.col }'
-t "shape of a reference parameter" "3 4" 'fun <> = show(M[][]: real) {
+t "dimensions of a reference parameter" "3 4" 'fun <> = show(M[][]: real) {
 ? M.row M.col }
 fun <> = main() { real A[3][4]
 show(A) }'
 t "row agrees with len" "3 3" 'fun <> = main() { real A[3][4]
 ? len(A) A.row }'
-# The shape is measured, not declared, so a row replaced at run time reports its
+# The dimensions are measured, not declared, so a row replaced at run time reports its
 # real length rather than the one the declaration asked for.
-t "shape is measured not declared" "2" 'fun <> = main() { real A[2][5]
+t "dimensions are measured not declared" "2" 'fun <> = main() { real A[2][5]
 A[0] : {1.,2.}
 ? A[0].row }'
-t "scalar has no dimensions" "int has no dimensions" 'fun <> = main() { x : 1
+t "scalar has no dimensions" "needs an array, not int" 'fun <> = main() { x : 1
 ? x.row }'
-t "unknown attribute rejected" "is not an array attribute" 'fun <> = main() { real A[2]
+t "unknown attribute rejected" "use .row, .col or .dim(n)" 'fun <> = main() { real A[2]
 ? A.size }'
-t "dim needs an axis" "needs an axis in parentheses" 'fun <> = main() { real A[2]
+t "dim needs an axis" "needs an axis, as .dim(0)" 'fun <> = main() { real A[2]
 ? A.dim }'
-t "axis must be an int" "needs an int axis, not real" 'fun <> = main() { real A[2][2]
+t "axis must be an int" "Axis must be int, not real" 'fun <> = main() { real A[2][2]
 ? A.dim(1.5) }'
 t "attribute is read-only" "is read-only" 'fun <> = main() { real A[2]
 A.row : 5 }'
@@ -464,34 +620,34 @@ t "long form still works" "3 2 1 0" 'fun <> = main() { for i : 3 to 0 step -1 {
 # An extent is fixed when the declaration runs and never changes, so a size that can be
 # settled statically is refused by the checker rather than by the interpreter. The two
 # rules are separate: >= 1, and int - a real is refused outright, never truncated.
-t "negative literal extent" "must be at least 1, got -2" 'fun <> = main() { real A[-2]
+t "negative literal extent" "size must be 1 or more, got -2" 'fun <> = main() { real A[-2]
 ? 1 }'
-t "zero extent" "must be at least 1, got 0" 'fun <> = main() { real A[0]
+t "zero extent" "size must be 1 or more, got 0" 'fun <> = main() { real A[0]
 ? 1 }'
-t "folded negative extent" "must be at least 1, got -2" 'fun <> = main() { real A[3-5]
+t "folded negative extent" "size must be 1 or more, got -2" 'fun <> = main() { real A[3-5]
 ? 1 }'
-t "negative in second dimension" "must be at least 1, got -3" 'fun <> = main() { real A[2][-3]
+t "negative in second dimension" "size must be 1 or more, got -3" 'fun <> = main() { real A[2][-3]
 ? 1 }'
-t "real extent refused, not truncated" "must be an int, not real" 'fun <> = main() { real A[2.5]
+t "real extent refused, not truncated" "size must be int, not real" 'fun <> = main() { real A[2.5]
 ? 1 }'
-t "real variable extent refused" "must be an int, not real" 'fun <> = main() { real k : 2.
+t "real variable extent refused" "size must be int, not real" 'fun <> = main() { real k : 2.
 real m[k]
 ? 1 }'
 # A static refusal must stop the run outright - the whole point is that nothing has
 # happened yet when the diagnostic appears.
-t "bad extent runs nothing" "must be at least 1" 'fun <> = main() {
+t "bad extent runs nothing" "size must be 1 or more" 'fun <> = main() {
 ? "ran first"
 real A[-2] }'
 # Only a size that genuinely depends on a variable reaches the interpreter. It reports the
 # value it computed, which the checker's message can afford to omit but this one cannot -
 # the number is nowhere in the source.
-t "computed zero extent traps" "at least 1, got 0" 'fun <> = main() { k : 2
+t "computed zero extent traps" "size must be 1 or more, got 0" 'fun <> = main() { k : 2
 real m[k-2][4]
 ? 1 }'
-t "computed negative extent traps" "at least 1, got -3" 'fun <> = main() { k : 2
+t "computed negative extent traps" "size must be 1 or more, got -3" 'fun <> = main() { k : 2
 real m[k-5]
 ? 1 }'
-t "computed extent names the array" "'w': array size" 'fun <> = f(v[]: real) { real w[len(v)-9]
+t "computed extent names the array" "'w': size must be" 'fun <> = f(v[]: real) { real w[len(v)-9]
 ? 1 }
 fun <> = main() { real p[3] : {1.,2.,3.}
 f(p) }'
@@ -581,7 +737,7 @@ t "NaN loop step" "Loop step out of range" 'fun <> = main() { for i:1. to 5. ste
 ?? i } }'
 t "out-of-Int-range loop end" "Loop end out of range" 'fun <> = main() { for i:1. to pow(10.,400.) {
 ?? i } }'
-t "bad bound reports, not traps" "before  Runtime error: line 3: Loop end" 'fun <> = main() {
+t "bad bound reports, not traps" "before  Error: line 3: Loop end" 'fun <> = main() {
 ? "before"
 for i:1. to 0./0. {
 ?? i } }'
@@ -617,7 +773,7 @@ t "REG print starting with -" "4" 'fun <> = main() {
 ? -2^2 }'
 t "REG print starting with (" "3" 'fun <> = main() {
 ? (1+2) }'
-t "REG parseError reaches caller" "PARSE:" 'fun <> = main() { x : * 5 }'
+t "REG parseError reaches caller" "Error: line 1: Unexpected '*'" 'fun <> = main() { x : * 5 }'
 
 # ------------------------------------------------------------------- precedence
 t "power is right-associative" "512" 'fun <> = main() {
@@ -633,11 +789,11 @@ t "mixed string and numbers" "Solution 3 5" 'fun <> = main() { x:3 y:5
 # ------------------------------------ 5.10 print commands own their line ('?', '??')
 # The rule needs Token.line: without it "? x ?? x" and the same two commands on two
 # lines are the identical token stream, so neither could be rejected without the other.
-t "? must start its line" "must be the first thing on its line" 'fun <> = main() { x : 1 ? x }'
-t "?? must start its line" "must be the first thing on its line" 'fun <> = main() { x : 1 ?? x }'
-t "two commands one line" "'??' must be the first thing on its line" 'fun <> = main() { x : 1
+t "? must start its line" "must start its line" 'fun <> = main() { x : 1 ? x }'
+t "?? must start its line" "must start its line" 'fun <> = main() { x : 1 ?? x }'
+t "two commands one line" "'??' must start its line" 'fun <> = main() { x : 1
 ? x ?? x }'
-t "two ? one line" "'?' must be the first thing on its line" 'fun <> = main() { x : 1
+t "two ? one line" "'?' must start its line" 'fun <> = main() { x : 1
 ? x ? x }'
 
 # A print command owns its line at *both* ends: it must open the line, and its items stop
@@ -663,7 +819,7 @@ t "indexed item on the same line" "v0 7.0000000 v1 8.0000000" 'fun <> = main() {
 ? "v0" v[0] "v1" v[1] }'
 t "attribute item on the same line" "rows 2 cols 2" 'fun <> = main() { real A[2][2]
 ? "rows" A.row "cols" A.col }'
-t "command after item list" "must be the first thing on its line" 'fun <> = main() { x : 1
+t "command after item list" "must start its line" 'fun <> = main() { x : 1
 ? "hello" ?? x }'
 # Indentation is invisible here - the lexer drops it before the parser sees a line at all.
 t "indented command is fine" "5" 'fun <> = main() {
@@ -672,7 +828,7 @@ t "indented command is fine" "5" 'fun <> = main() {
 }'
 # 3.0: only declarations and definitions live outside a function, so a print can no
 # longer be the first token of the file. 2.x allowed statements at top level.
-t "no statements in global space" "Only declarations and 'fun' definitions may appear outside" '? 9
+t "no statements in global space" "must be inside a function" '? 9
 fun <> = main() {
 ? 7 }'
 t "global declaration is allowed" "4" 'int g : 4
@@ -687,23 +843,23 @@ t "!= is not two commands" "0" 'fun <> = main() {
 ? 2 != 2 }'
 
 # ------------------------------------------------------- 10 error line reporting
-# Lex, parse and check errors all name the line. Blank lines and comments count, so
+# Every diagnostic names its line, whatever stage produced it. Blank lines and comments count, so
 # these double as a check that the lexer's newline counting isn't skipping anything.
-t "lex error names line" "Lex error: line 3:" 'fun <> = main() {
+t "lex error names line" "Error: line 3:" 'fun <> = main() {
  x : 1
  хn : 5
 }'
-t "lex line counts blanks" "Lex error: line 5:" 'fun <> = main() {
+t "lex line counts blanks" "Error: line 5:" 'fun <> = main() {
 
  // a comment
 
  y : 1.2.3
 }'
-t "parse error names line" "Parse error: line 3:" 'fun <> = main() {
+t "parse error names line" "Error: line 3:" 'fun <> = main() {
  x : 1
  x : 2 ? x
 }'
-t "end of input names last line" "Parse error: line 3: Missing" 'fun <> = main() {
+t "end of input names last line" "Error: line 3: Missing" 'fun <> = main() {
  x : 1
  ? x'
 t "check error names line" "Error: line 4: Undefined variable" 'fun <> = main() {
@@ -730,7 +886,7 @@ fun <> = main() {
 # ------------------------------------------------- end of input at every position
 # Truncated source must produce a diagnostic - never a hang, crash, or silent pass.
 while IFS= read -r snippet; do
-    t "EOF: $snippet" "Parse error" "$snippet"
+    t "EOF: $snippet" "Error: line" "$snippet"
 done <<'SNIPPETS'
 fun
 fun <

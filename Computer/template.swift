@@ -20,7 +20,7 @@ All rights reserved
 -------------------
 ? "is prime" x
 -------------------
-// shape - row, col, dim(n)
+// dimensions - row, col, dim(n)
 fun <> = main() {
   real A[3][4]
   int  C[2][3][5]
@@ -53,12 +53,25 @@ fun <> = main() {
   ? prec(3) 1./3.
   ? prec(-1) 1./3.
 }
-// conversions - int() drops the fraction, real() is exact
+// conversions - int() drops the fraction, char() is the code point
 fun <> = main() {
   real x : 2.7
+  char s[8] : "a"
 
   ? int(x) int(0.-x)
   ? real(20)
+  ? int(s[0]) char(65)
+}
+// strings - compare, order, join. pi is built in
+fun <> = main() {
+  char a[20] : "alice"
+  char b[128] : "bob"
+
+  if a < b {
+    ? a "sorts before" b
+  }
+  ? a + " and " + b
+  ? prec(15) "pi is" pi
 }
 // quadratic
 fun <> = main() {
@@ -160,7 +173,7 @@ fun <> = main() {
 -------------------
 -- What is not included --
 1. Arrays cannot be returned in <> - pass one in and fill it, it is a reference
-2. No pi or e constants - write the number
+2. No e constant - pi is built in, write the rest
 3. No string functions - char[] holds text, nothing splits or joins it
 4. No input - a program only prints
 --------------------------

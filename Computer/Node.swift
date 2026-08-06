@@ -136,7 +136,7 @@ public struct IndexNode: ExprNode {
     public var description: String { "IndexNode(\(base)[\(index)])" }
 }
 
-// The shape of an array: 'A.row' is axis 0, 'A.col' is axis 1, 'A.dim(n)' is axis n.
+// The dimensions of an array: 'A.row' is axis 0, 'A.col' is axis 1, 'A.dim(n)' is axis n.
 // One node for all three because they ask the same question - .row and .col are just
 // the two axes a matrix uses often enough to deserve names. 'spelling' is carried only
 // so a diagnostic can quote back what the programmer actually wrote.

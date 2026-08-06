@@ -44,7 +44,7 @@ if let lexError = lexer.lexError {
 let parser = Parser(tokens: tokens)
 let ast = parser.parseProgram()
 if let parseError = parser.parseError {
-    print("PARSE: \(parseError)")
+    print("\(parseError)")
     exit(1)
 }
 

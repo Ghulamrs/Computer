@@ -65,7 +65,11 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // on mint.
         program.textColor = UIColor.init(displayP3Red: 0.63, green: 0.35, blue: 0.75, alpha: 1)
 
-        console.textColor = UIColor.red
+        // Everything used to be red, which meant red carried no signal - a program's own
+        // output shouted and its errors blended into it. Output is now near-black and the
+        // colour is spent only where something went wrong.
+        console.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        console.textColor = ConsoleStyle.output.color
         console.isScrollEnabled = true
         console.isEditable = false
         if coordinator!.fileURL.isEmpty {
@@ -87,7 +91,9 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
             UIBarButtonItem(image: UIImage(systemName: "doc.text.viewfinder"),
                 style: .plain, target: self, action: #selector(scanTapped)),
             UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.down"),
-                style: .plain, target: self, action: #selector(saveTapped))
+                style: .plain, target: self, action: #selector(saveTapped)),
+            UIBarButtonItem(image: UIImage(systemName: "questionmark.circle"),
+                style: .plain, target: self, action: #selector(helpTapped))
         ]
 
         // Lives in the nav bar (as titleView, dead center) instead of docked below the
@@ -105,6 +111,34 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     deinit {
         NotificationCenter.default.removeObserver(self)
+    }
+
+    // Three levels, in the conventional colours: a reader should not have to learn a
+    // private scheme to tell a result from a complaint.
+    enum ConsoleStyle {
+        case output, warning, error
+
+        var color: UIColor {
+            switch self {
+            case .output:  return UIColor(white: 0.10, alpha: 1)
+            case .warning: return UIColor(displayP3Red: 0.70, green: 0.42, blue: 0.0, alpha: 1)
+            case .error:   return UIColor(displayP3Red: 0.75, green: 0.0, blue: 0.05, alpha: 1)
+            }
+        }
+    }
+
+    private func clearConsole() {
+        console.attributedText = NSAttributedString(string: "")
+    }
+
+    private func append(_ text: String, _ style: ConsoleStyle) {
+        let font = console.font ?? UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
+        let run = NSAttributedString(string: text,
+                                     attributes: [.foregroundColor: style.color, .font: font])
+        let all = NSMutableAttributedString(attributedString: console.attributedText
+                                            ?? NSAttributedString(string: ""))
+        all.append(run)
+        console.attributedText = all
     }
 
     func textViewDidChangeSelection(_ textView: UITextView) {
@@ -281,7 +315,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         guard let programSource = program.text else {return}
 
-        console.text = ""
+        clearConsole()
 
         let lexer = Lexer(input: programSource)
         let tokens = lexer.tokenize()
@@ -289,7 +323,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // Must come before parsing: tokenize() stops at the offending character, so the
         // token stream is truncated and any parse error from here would point elsewhere.
         if let lexError = lexer.lexError {
-            console.text += "\(lexError)\n"
+            append("\(lexError)\n", .error)
             return
         }
 
@@ -297,7 +331,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         let astNodes = parser.parseProgram()
 
         if let parseError = parser.parseError {
-            console.text += "\(parseError)\n"
+            append("\(parseError)\n", .error)
             return
         }
 
@@ -311,15 +345,22 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // Warnings show either way; only errors stop the run. Unlike the other two stages
         // this one does not stop at the first problem, so the console lists them all.
         for diagnostic in checker.diagnostics {
-            console.text += "\(diagnostic)\n"
+            append("\(diagnostic)\n", diagnostic.severity == .error ? .error : .warning)
         }
         if checker.hasErrors { return }
 
         let interpreter = Interpreter()
+        interpreter.diagnostic = { [weak self] text in self?.append(text, .error) }
         interpreter.output = { [weak self] text in
-            self?.console.text += text
+            self?.append(text, .output)
         }
         interpreter.run(checkedAST)
+    }
+
+    // Pushed rather than presented so the editor keeps its place underneath and the
+    // automatic back button returns to exactly the program being written.
+    @objc func helpTapped() {
+        navigationController?.pushViewController(HelpViewController(), animated: true)
     }
 
     @objc func scanTapped() {

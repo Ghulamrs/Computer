@@ -4,7 +4,7 @@ struct RuntimeError: Error, CustomStringConvertible {
     let message: String
     let line: Int
     var description: String {
-        line > 0 ? "Runtime error: line \(line): \(message)" : "Runtime error: \(message)"
+        line > 0 ? "Error: line \(line): \(message)" : "Error: \(message)"
     }
 }
 
@@ -141,6 +141,11 @@ extension Value {
 final class Interpreter {
     var output: (String) -> Void = { print($0, terminator: "") }
 
+    // A separate channel for the interpreter's own failures. They used to travel the
+    // output callback alongside the program's prints, which left the console unable to
+    // tell a result from a crash without inspecting the text.
+    var diagnostic: ((String) -> Void)?
+
     private var prototypes: [String: PrototypeNode] = [:]
     private var bodies: [String: [StmtNode]] = [:]
     private var globals: [String: Box] = [:]
@@ -150,6 +155,8 @@ final class Interpreter {
     private var callDepth: [String: Int] = [:]
     private var totalCallDepth = 0
     private static let totalDepthLimit = 1024
+
+    private static let constants: [String: Value] = ["pi": .real(Double.pi)]
 
     private enum Flow {
         case normal
@@ -173,9 +180,9 @@ final class Interpreter {
             }
             _ = try call(main, arguments: [], line: main.line)
         } catch let error as RuntimeError {
-            output("\(error)\n")
+            (diagnostic ?? output)("\(error)\n")
         } catch {
-            output("Runtime error: \(error)\n")
+            (diagnostic ?? output)("Error: \(error)\n")
         }
     }
 
@@ -184,6 +191,8 @@ final class Interpreter {
             if let box = scope[name] { return box }
         }
         if let box = globals[name] { return box }
+        // Checked as read-only, so a fresh Box each time is safe: nothing can write it.
+        if let constant = Interpreter.constants[name] { return Box(constant) }
         throw RuntimeError(message: "Undefined variable '\(name)'", line: line)
     }
 
@@ -274,8 +283,7 @@ final class Interpreter {
                 // same line - '? prec(12) x' shows x at twelve places.
                 if let directive = item as? PrecisionNode {
                     guard case .int(let places) = try evaluate(directive.places) else {
-                        throw RuntimeError(message: "prec() needs an int number of places",
-                                           line: node.line)
+                        throw RuntimeError(message: "prec() needs an int", line: node.line)
                     }
                     Value.setPlaces(Int(places))
                     continue
@@ -384,11 +392,10 @@ final class Interpreter {
         for size in node.sizes {
             let value = try evaluate(size)
             guard case .int(let count) = value else {
-                throw RuntimeError(message: "'\(node.name)': array size must be an int, got \(value.text)",
-                                   line: node.line)
+                throw RuntimeError(message: "'\(node.name)': size must be int", line: node.line)
             }
             guard count >= 1 else {
-                throw RuntimeError(message: "'\(node.name)': array size must be at least 1, got \(count)",
+                throw RuntimeError(message: "'\(node.name)': size must be 1 or more, got \(count)",
                                    line: node.line)
             }
             sizes.append(Int(count))
@@ -476,7 +483,7 @@ final class Interpreter {
         switch expr {
         case let node as IntNode:
             guard let value = Int32(exactly: node.value) else {
-                throw RuntimeError(message: "Integer literal \(node.value) does not fit 4 bytes",
+                throw RuntimeError(message: "\(node.value) is too big for int - use real",
                                    line: currentLine)
             }
             return .int(value)
@@ -528,7 +535,7 @@ final class Interpreter {
             return values.first ?? .int(0)
 
         default:
-            throw RuntimeError(message: "Cannot evaluate \(type(of: expr))", line: currentLine)
+            throw RuntimeError(message: "This expression cannot be evaluated", line: currentLine)
         }
     }
 
@@ -541,9 +548,46 @@ final class Interpreter {
                 throw RuntimeError(message: "Cannot convert \(v) to int", line: currentLine)
             }
             return .int(truncated)
+
+        // A char is its code point in the other direction. Widening out of a char always
+        // succeeds - 0...255 fits both - so only the narrowing into one can fail, and it
+        // is refused rather than wrapped: a wrapped code point is a wrong character that
+        // looks like a right one.
+        case (.char(let v), .int):
+            return .int(Int32(v))
+        case (.char(let v), .real):
+            return .real(Double(v))
+        case (.int(let v), .char):
+            guard let byte = UInt8(exactly: v) else {
+                throw RuntimeError(message: "\(v) is not a char (0 to 255)", line: currentLine)
+            }
+            return .char(byte)
+        case (.real(let v), .char):
+            guard v.isFinite, let byte = UInt8(exactly: v.rounded(.towardZero)) else {
+                throw RuntimeError(message: "\(v) is not a char (0 to 255)", line: currentLine)
+            }
+            return .char(byte)
+
         default:
             return value
         }
+    }
+
+    // The text a string actually holds: everything before the terminator, which is what
+    // makes a name in a char[20] equal to the same name in a char[128]. Returns nil for
+    // anything that is not a char array, so the numeric paths below are unaffected.
+    private static func content(of value: Value) -> [UInt8]? {
+        guard case .array(let ref) = value, case .char = ref.elements.first else { return nil }
+        var bytes: [UInt8] = []
+        for element in ref.elements {
+            guard case .char(let byte) = element, byte != 0 else { break }
+            bytes.append(byte)
+        }
+        return bytes
+    }
+
+    private static func string(from bytes: [UInt8]) -> Value {
+        return .array(ArrayRef(bytes.map { Value.char($0) } + [.char(0)]))
     }
 
     private func apply(_ op: BinaryOpNode.Op, _ lhs: Value, _ rhs: Value, _ line: Int) throws -> Value {
@@ -553,6 +597,21 @@ final class Interpreter {
         case .and: return truth(lhs.isTruthy && rhs.isTruthy)
         case .or:  return truth(lhs.isTruthy || rhs.isTruthy)
         default:   break
+        }
+
+        // Ordering is by byte, so it is ASCII order: every uppercase letter sorts before
+        // every lowercase one. That is the conventional rule, and the reason a name list
+        // wants folding to one case before it is sorted.
+        if let a = Interpreter.content(of: lhs), let b = Interpreter.content(of: rhs) {
+            switch op {
+            case .add:      return Interpreter.string(from: a + b)
+            case .equal:    return truth(a == b)
+            case .notEqual: return truth(a != b)
+            case .less:     return truth(a.lexicographicallyPrecedes(b))
+            case .greater:  return truth(b.lexicographicallyPrecedes(a))
+            default:
+                throw RuntimeError(message: "'\(op.rawValue)' does not apply to strings", line: line)
+            }
         }
 
         if case .int(let a) = lhs, case .int(let b) = rhs {
@@ -567,7 +626,7 @@ final class Interpreter {
                 guard b != 0 else { throw RuntimeError(message: "Division by zero", line: line) }
                 return .int(try guarded(a.remainderReportingOverflow(dividingBy: b), op, line))
             case .power:
-                guard b >= 0 else { throw RuntimeError(message: "A negative int power needs real operands", line: line) }
+                guard b >= 0 else { throw RuntimeError(message: "Negative power needs reals", line: line) }
                 var result: Int32 = 1
                 for _ in 0..<b { result = try guarded(result.multipliedReportingOverflow(by: a), op, line) }
                 return .int(result)
@@ -599,8 +658,7 @@ final class Interpreter {
     private func guarded(_ result: (partialValue: Int32, overflow: Bool),
                          _ op: BinaryOpNode.Op, _ line: Int) throws -> Int32 {
         guard !result.overflow else {
-            throw RuntimeError(message: "int overflow in '\(op.rawValue)' - the value does not fit "
-                               + "4 bytes (max \(Int32.max)). Use real.", line: line)
+            throw RuntimeError(message: "int overflow in '\(op.rawValue)' - use real", line: line)
         }
         return result.partialValue
     }
@@ -673,6 +731,8 @@ final class Interpreter {
             return [try convert(try evaluate(node.arguments[0]), to: .int)]
         case "real":
             return [try convert(try evaluate(node.arguments[0]), to: .real)]
+        case "char":
+            return [try convert(try evaluate(node.arguments[0]), to: .char)]
 
         case "max", "min":
             let a = try evaluate(node.arguments[0])
