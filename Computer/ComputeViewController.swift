@@ -31,18 +31,41 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // SF Mono, which has no name to pass to UIFont(name:) on iOS - the system API is
         // the only way to reach it. Set before lineview copies it below so the gutter and
         // the editor keep the same line height and the numbers stay on their lines.
-        program.font = UIFont.monospacedSystemFont(ofSize: 12, weight: .medium)
+        program.font = UIFont.monospacedSystemFont(ofSize: 14, weight: .medium)
 
-        lineview.delegate = self
-        lineview.textColor = UIColor.init(displayP3Red: 0.75, green: 0.75, blue: 0.75, alpha: 1)
+        // Grey, a shade darker than the 0.75 the gutter carried against its old white
+        // strip: the numbers are reference, not code, so they should sit behind the
+        // violet without disappearing - 0.60 reads about 2.9:1 on white, where 0.75 was
+        // 1.8:1 and hard to count down in daylight.
+        lineview.textColor = UIColor.init(white: 0.6, alpha: 1)
         lineview.font = program.font
         lineview.isScrollEnabled = true
-        lineview.text = ""
-        for i in 1..<100 {
-            lineview.text += String(i) + "\n"
-        }
+        // The gutter is a mirror, never a control. Left touchable it was its own scroll
+        // view: a stray finger could drag the numbers out of line with the code, and the
+        // offset it was handed back each frame fought that drag instead of following it.
+        // Its own bounce stays on so it can be pushed past its bounds by the editor's,
+        // which is what keeps a number beside its line through the whole spring.
+        lineview.isUserInteractionEnabled = false
+        // The gutter is 40pt wide in the storyboard and its numbers are right-aligned, so
+        // its own padding is width the digits cannot use. Zeroing it buys back 8pt, about
+        // what a fourth digit costs - which the old fixed 1...99 gutter never needed and
+        // a growing one does. Four digits measure 34.6pt at 14pt SF Mono, so 38pt of usable
+        // width leaves the column room to reach 9999 without a number wrapping - and a
+        // wrapped number would push every line below it out of register, not just its own.
+        // The vertical inset has to keep matching the editor's, or every number sits off
+        // the line it counts.
+        lineview.textContainerInset = UIEdgeInsets(top: program.textContainerInset.top, left: 0,
+                                                   bottom: program.textContainerInset.bottom, right: 2)
+        lineview.textContainer.lineFragmentPadding = 0
 
         program.delegate = self
+        // A short program has nothing to scroll - no bar, no travel - and a view that
+        // cannot move under the finger reads as a dead one. The bounce is the answer the
+        // page gives back: alwaysBounceVertical keeps it for text shorter than the frame,
+        // which is the case where UIScrollView would otherwise ignore the drag entirely.
+        // The gutter follows the same offset, so the numbers spring with their lines.
+        program.bounces = true
+        program.alwaysBounceVertical = true
         // Shalimar source is ASCII and its identifiers are case-sensitive, so iOS's text
         // "helpers" all corrupt a program invisibly: smart quotes replace the " the lexer
         // scans for, smart dashes fuse "--" into an en-dash, and sentence capitalization
@@ -57,13 +80,16 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         program.smartDashesType = .no
         program.smartInsertDeleteType = .no
         program.keyboardType = .asciiCapable
-        program.backgroundColor = UIColor.init(displayP3Red: 0.8, green: 1, blue: 0.95, alpha: 1)
+        // The mint is back, lightened from 0.8 red to 0.9: enough tint to separate the page
+        // from the white column beside it, pale enough that the violet still carries -
+        // 4.1:1 here, against 3.9:1 on the original mint and 4.3:1 on plain white.
+        program.backgroundColor = UIColor.init(displayP3Red: 0.9, green: 1, blue: 0.975, alpha: 1)
         console.backgroundColor = UIColor.init(white: 0.8, alpha: 0.5)
-        // The original violet, deepened to carry at 12pt but not to black - about 4.1:1
-        // against the mint background set below. Not .label or a dynamic colour: that
+        // The original violet, deepened to carry at 14pt but not to black - about 4.1:1
+        // against the mint background set above. Not .label or a dynamic colour: that
         // background is fixed light, so anything inverting in dark mode would land white
         // on mint.
-        program.textColor = UIColor.init(displayP3Red: 0.63, green: 0.35, blue: 0.75, alpha: 1)
+        program.textColor = Self.codeColour
 
         // Everything used to be red, which meant red carried no signal - a program's own
         // output shouted and its errors blended into it. Output is now near-black and the
@@ -77,6 +103,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         } else {
             load(fileName: coordinator!.fileURL)
         }
+        programChanged()
 
         let tap2 = UITapGestureRecognizer(target: self, action: #selector(doubleTapped))
         tap2.numberOfTapsRequired = 2
@@ -109,6 +136,17 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         navigationItem.titleView = runButton
     }
 
+    // Where a line wraps depends on the editor's width, so a rotation or a split-view
+    // resize changes the row count without changing the text. The guard inside leaves
+    // this cheap when nothing moved.
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        refreshLineNumbers()
+        // Same reason as the numbers: a resize rewraps the text, and a strip cut to the
+        // old wrapping would sit over the wrong rows.
+        layoutErrorStrips()
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
     }
@@ -129,6 +167,8 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     private func clearConsole() {
         console.attributedText = NSAttributedString(string: "")
+        errorLines = []
+        layoutErrorStrips()
     }
 
     private func append(_ text: String, _ style: ConsoleStyle) {
@@ -139,15 +179,273 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                                             ?? NSAttributedString(string: ""))
         all.append(run)
         console.attributedText = all
+        if style == .error, let line = Self.reportedLine(in: text) { errorLines.insert(line) }
+    }
+
+    // The four stages report errors in four different types - a String from the lexer, a
+    // LocatedParseError, a Diagnostic, a RuntimeError - but every one of them prints as
+    // "Error: line N:", and the console text is the one place all four meet. Reading the
+    // number back out of the message keeps the strip agreeing with what the user is being
+    // told: if the console names a line, that line is what gets marked, and a message
+    // without a line (a lex error before any line is known) marks nothing.
+    private static func reportedLine(in text: String) -> Int? {
+        guard let match = text.range(of: "line [0-9]+", options: .regularExpression) else { return nil }
+        return Int(text[match].dropFirst("line ".count))
     }
 
     func textViewDidChangeSelection(_ textView: UITextView) {
         if !program.text.isEmpty { self.count = 0 }
     }
 
-    // Three spaces a level, which is what the phone column can afford: at 12pt a line
-    // holds about 47 characters, so a wider step pushes nested bodies into wrapping and
-    // the wrapping is what knocks the line-number gutter out of register.
+    func textViewDidChange(_ textView: UITextView) {
+        guard textView === program else { return }
+        programChanged()
+    }
+
+    // Everything the editor owes its text after that text moves. Both halves read the
+    // same characters, so they belong at the same call sites - a highlight without a
+    // renumber leaves the column short, and the reverse leaves a new keyword plain.
+    private func programChanged() {
+        applySyntaxColours()
+        refreshLineNumbers()
+        // The marks belong to the run that produced them. Once a character moves, line 7
+        // is no longer the line the console complained about, so a strip left behind would
+        // be pointing at whatever drifted under it.
+        errorLines = []
+        layoutErrorStrips()
+    }
+
+    // Lines the last run reported an error on, and the strips drawn behind them.
+    private var errorLines: Set<Int> = []
+    private var errorStrips: [UIView] = []
+
+    // Highlighter yellow, the mark a reader already knows: it says "here" without saying
+    // anything about severity, which is right when the console beside it is already saying
+    // what went wrong. It is the one colour in the editor that belongs to no other level -
+    // not the violets of the code, not the mint of the page - so nothing else can be
+    // mistaken for it. Bright, but it costs the text nothing: the code holds 4.0:1 on it,
+    // which is what it had on the mint, and the keywords 10.6:1.
+    static let errorStripColour = UIColor.init(displayP3Red: 1.0, green: 1.0, blue: 0.0, alpha: 1)
+
+    // A strip per reported line, sized from the layout rather than from a line height, so
+    // a line that wraps to three rows is covered by one band three rows tall. They go in
+    // at index 0, behind the text view's own container view - painted over the text they
+    // would wash it out, and as an attribute on the characters they would stop at the last
+    // one and leave a ragged right edge instead of a strip.
+    private func layoutErrorStrips() {
+        errorStrips.forEach { $0.removeFromSuperview() }
+        errorStrips = []
+        guard !errorLines.isEmpty else { return }
+
+        let source = (program.text ?? "") as NSString
+        let layoutManager = program.layoutManager
+        layoutManager.ensureLayout(for: program.textContainer)
+
+        for range in Self.characterRanges(of: errorLines, in: source) {
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            var box = layoutManager.boundingRect(forGlyphRange: glyphs, in: program.textContainer)
+            // An empty line holds no glyphs, so it has no bounding box - its fragment is
+            // the only thing that knows where the cursor would sit.
+            if box.height == 0 {
+                if glyphs.location < layoutManager.numberOfGlyphs {
+                    box = layoutManager.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
+                } else if layoutManager.extraLineFragmentTextContainer != nil {
+                    box = layoutManager.extraLineFragmentRect
+                } else {
+                    continue
+                }
+            }
+
+            let strip = UIView(frame: CGRect(x: 0,
+                                             y: box.minY + program.textContainerInset.top,
+                                             width: max(program.bounds.width, program.contentSize.width),
+                                             height: box.height))
+            strip.backgroundColor = Self.errorStripColour
+            strip.isUserInteractionEnabled = false
+            program.insertSubview(strip, at: 0)
+            errorStrips.append(strip)
+        }
+    }
+
+    // The character range of each wanted line, walked once rather than by splitting the
+    // whole program into an array of lines for the one or two that are wanted.
+    private static func characterRanges(of lines: Set<Int>, in source: NSString) -> [NSRange] {
+        var ranges: [NSRange] = []
+        var line = 1
+        var start = 0
+        var i = 0
+        while i <= source.length {
+            if i == source.length || source.character(at: i) == 0x0A {
+                if lines.contains(line) {
+                    ranges.append(NSRange(location: start, length: i - start))
+                }
+                line += 1
+                start = i + 1
+            }
+            i += 1
+        }
+        return ranges
+    }
+
+    // Three levels, and the order of them is the point: keywords darkest, code in the
+    // middle, comments palest. Violet for code, the same hue driven down near indigo for
+    // the words the language reserves - a different hue would have made the keywords a
+    // second subject competing with the program, where this reads as emphasis inside one
+    // voice. Against the mint they measure 10.7:1, 4.1:1 and 2.7:1, so the eye meets them
+    // in that order and a comment is the last thing it stops on.
+    static let codeColour = UIColor.init(displayP3Red: 0.63, green: 0.35, blue: 0.75, alpha: 1)
+    static let keywordColour = UIColor.init(displayP3Red: 0.32, green: 0.08, blue: 0.52, alpha: 1)
+    // Grey, and neutral rather than a paled violet: a comment is not weak code, it is not
+    // code at all, and dropping the hue says that more plainly than lightening it would.
+    // 2.7:1 is quiet but still legible - the reader who goes looking can read it.
+    static let commentColour = UIColor.init(white: 0.6, alpha: 1)
+    // The one place a hue change is earned: a literal is the user's own data passing
+    // through, not language, so depth alone cannot say what it is. Rose - a pink deep
+    // enough to be read, which a pale one is not: at 5.1:1 it sits between the code and
+    // the keywords, so a literal announces itself inside the line rather than blending
+    // into it. Lightening it is where it stops working - the same pink as a pastel falls
+    // to 1.6:1, fainter than the comments it is supposed to outrank.
+    static let stringColour = UIColor.init(displayP3Red: 0.75, green: 0.10, blue: 0.38, alpha: 1)
+
+    // Lowercased, because the lexer folds case before it compares (TokenKind.swift) - so
+    // WHILE is the keyword too, and colouring only "while" would tell the reader that the
+    // capital one is an identifier when the language disagrees.
+    static let keywords: Set<String> = [
+        "if", "elseif", "else", "while", "for", "to", "step", "fun", "return",
+        "int", "real", "char"
+    ]
+
+    // The colouring has to agree with the lexer about what a word is, or it teaches the
+    // wrong thing: "for" inside a comment is prose, and "to" inside a string is data.
+    // So this walks the text the way tokenList does rather than matching \bfor\b - "//"
+    // to end of line, a quote to the next quote (the lexer's string pattern has no escapes
+    // and does not stop at a newline), and identifiers only in what is left over.
+    private func applySyntaxColours() {
+        let storage = program.textStorage
+        let source = storage.string as NSString
+        let whole = NSRange(location: 0, length: source.length)
+        let body = program.font ?? UIFont.monospacedSystemFont(ofSize: 14, weight: .medium)
+        // Weight is free here in a way it would not be in a proportional face: the
+        // monospaced system font advances every glyph the same distance at every weight,
+        // measured identical from medium to bold. So bold cannot rewrap a line or shift
+        // a number off the line it counts - it only makes the word heavier.
+        let heavy = UIFont.monospacedSystemFont(ofSize: body.pointSize, weight: .bold)
+
+        storage.beginEditing()
+        storage.addAttribute(.foregroundColor, value: Self.codeColour, range: whole)
+        storage.addAttribute(.font, value: body, range: whole)
+
+        var i = 0
+        while i < source.length {
+            let c = source.character(at: i)
+            // "//" - the rest of the line is a comment. The lexer throws these away
+            // before the parser ever sees them, and the grey says so.
+            if c == 0x2F, i + 1 < source.length, source.character(at: i + 1) == 0x2F {
+                let start = i
+                while i < source.length, source.character(at: i) != 0x0A { i += 1 }
+                storage.addAttribute(.foregroundColor, value: Self.commentColour,
+                                     range: NSRange(location: start, length: i - start))
+                continue
+            }
+            // A quote opens a string that runs to the next quote, newlines included.
+            // Quotes and all: the delimiters are part of the literal, and colouring the
+            // body alone would leave them looking like stray operators.
+            if c == 0x22 {
+                let start = i
+                i += 1
+                while i < source.length, source.character(at: i) != 0x22 { i += 1 }
+                i += 1
+                // An unterminated string runs off the end, so the span has to be clipped
+                // back to the text - the lexer's pattern closes the quote optionally too.
+                let end = min(i, source.length)
+                storage.addAttribute(.foregroundColor, value: Self.stringColour,
+                                     range: NSRange(location: start, length: end - start))
+                continue
+            }
+            if Self.isIdentifierHead(c) {
+                let start = i
+                while i < source.length, Self.isIdentifierBody(source.character(at: i)) { i += 1 }
+                let range = NSRange(location: start, length: i - start)
+                if Self.keywords.contains(source.substring(with: range).lowercased()) {
+                    storage.addAttribute(.foregroundColor, value: Self.keywordColour, range: range)
+                    storage.addAttribute(.font, value: heavy, range: range)
+                }
+                continue
+            }
+            i += 1
+        }
+        storage.endEditing()
+
+        // Without this the next character typed inherits whatever the caret was sitting
+        // in, so a word typed after a keyword starts out keyword-coloured until the next
+        // pass repaints it - a flicker on every keystroke at the end of a line.
+        program.typingAttributes = [.font: body, .foregroundColor: Self.codeColour]
+    }
+
+    // [a-zA-Z_] then [a-zA-Z0-9_]*, which is the identifier pattern in tokenList.
+    private static func isIdentifierHead(_ c: unichar) -> Bool {
+        (c >= 0x41 && c <= 0x5A) || (c >= 0x61 && c <= 0x7A) || c == 0x5F
+    }
+
+    private static func isIdentifierBody(_ c: unichar) -> Bool {
+        isIdentifierHead(c) || (c >= 0x30 && c <= 0x39)
+    }
+
+    // The gutter used to be a fixed 1...99, printed once at load. That was wrong in both
+    // directions: it ran out on a hundredth line, and on a five-line program it counted
+    // 94 lines that were not there. It is generated from the editor now, so the last
+    // number in the column is always the last line of the program.
+    //
+    // Counting "\n" would be enough for the length, but not for the alignment: a line
+    // too long for the column occupies two rows on screen while remaining one line to
+    // the lexer. Numbering rows would then report the wrong line for every error below
+    // the first wrap. So the numbers come from the layout instead - one row per line
+    // fragment, but a number only on the fragment that begins a line, and a blank on
+    // each continuation. A wrapped line keeps exactly one number, opposite its head.
+    private func refreshLineNumbers() {
+        let source = (program.text ?? "") as NSString
+        let layoutManager = program.layoutManager
+        // The fragments below are only as current as the layout, and an edit that has
+        // not been laid out yet would be counted at its old width.
+        layoutManager.ensureLayout(for: program.textContainer)
+
+        var column: [String] = []
+        var line = 0
+        let everything = NSRange(location: 0, length: layoutManager.numberOfGlyphs)
+        layoutManager.enumerateLineFragments(forGlyphRange: everything) { _, _, _, glyphRange, _ in
+            let characters = layoutManager.characterRange(forGlyphRange: glyphRange,
+                                                          actualGlyphRange: nil)
+            // A fragment begins a line when the character before it is the newline that
+            // ended the previous one - or when there is no character before it at all.
+            let startsLine = characters.location == 0
+                || source.character(at: characters.location - 1) == 0x0A
+            if startsLine {
+                line += 1
+                column.append(String(line))
+            } else {
+                column.append("")
+            }
+        }
+
+        // Text ending in a newline, and empty text, both leave a final empty line that
+        // holds no glyphs - it is where the cursor sits after Return. TextKit keeps it
+        // out of the enumeration above and in the extra fragment instead, but it is a
+        // line the user can type on and it needs a number like any other.
+        if layoutManager.extraLineFragmentTextContainer != nil {
+            line += 1
+            column.append(String(line))
+        }
+
+        let numbers = column.joined(separator: "\n")
+        guard numbers != lineview.text else { return }
+        lineview.text = numbers
+        // Replacing the text resets the gutter's scroll position, so put it back in step
+        // with the editor rather than waiting for the next scroll to do it.
+        lineview.contentOffset = program.contentOffset
+    }
+
+    // Three spaces a level, which is what the phone column can afford: at 14pt a line
+    // holds about 39 characters, so a wider step pushes nested bodies into wrapping.
     static let indentWidth = 3
 
     // Braces opened and closed on one line, ignoring any that are not structure: a brace
@@ -304,10 +602,14 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
             program.text += x[7] + "\n  "
             program.text += x[18] + "\n"
             program.text += x[8] + "\n"
+            programChanged()
         }
     }
     
+    // One way only. This fires for the gutter's own scrolling too, and answering that by
+    // reassigning the gutter's offset is a loop that reports as a twitch on screen.
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        guard scrollView === program else { return }
         lineview.contentOffset = program.contentOffset
     }
     
@@ -316,6 +618,9 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         guard let programSource = program.text else {return}
 
         clearConsole()
+        // Every stage below can return early, and the strips have to be drawn whichever
+        // one stopped the run - so this is deferred rather than repeated at four exits.
+        defer { layoutErrorStrips() }
 
         let lexer = Lexer(input: programSource)
         let tokens = lexer.tokenize()
@@ -442,6 +747,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                 // Line count is preserved, so the numbers in lateCommands still point at
                 // the lines the user is about to be shown.
                 self.program.text = Self.reindented(scannedText)
+                self.programChanged()
                 var message = "Let's review the code before running."
                 if let first = lateCommands.first {
                     message += "\n\nLine \(first) has a '?' that isn't at the start of the line"
@@ -525,7 +831,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         let textView = tapGesture.view as? UITextView
         let point = tapGesture.location(in: textView!)
         if let detectedWord = getWordAtPosition(tapGesture, point) {
-            if self.count == 0 { program.text += detectedWord + "\n" }
+            if self.count == 0 {
+                program.text += detectedWord + "\n"
+                programChanged()
+            }
         }
     }
 
@@ -588,6 +897,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
             let docDirURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             let fileURL = docDirURL.appendingPathComponent(fileName) //.appendingPathExtension("sha")
             program.text = Self.reindented(try String(contentsOf: fileURL))
+            programChanged()
         } catch let error as NSError {
             print(error)
         }
