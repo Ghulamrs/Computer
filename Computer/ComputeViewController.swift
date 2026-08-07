@@ -98,12 +98,12 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         console.textColor = ConsoleStyle.output.color
         console.isScrollEnabled = true
         console.isEditable = false
-        if coordinator!.fileURL.isEmpty {
-            program.text = Self.reindented(source)
-        } else {
+        // A new program is typed in rather than pasted in, once the view is on screen -
+        // see viewDidAppear. An opened file is not: watching a file you already wrote
+        // being retyped would be a wait, not a welcome.
+        if !coordinator!.fileURL.isEmpty {
             load(fileName: coordinator!.fileURL)
         }
-        programChanged()
 
         let tap2 = UITapGestureRecognizer(target: self, action: #selector(doubleTapped))
         tap2.numberOfTapsRequired = 2
@@ -111,6 +111,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
         let tap1 = UITapGestureRecognizer(target: self, action: #selector(textTapped(_:)))
         tap1.numberOfTapsRequired = 1
+        // Without this the first tap of a double tap fires the single-tap handler too, so
+        // a line went into the editor before doubleTapped could see whether the editor was
+        // empty - and it never was, because the tap that arrived first had just filled it.
+        tap1.require(toFail: tap2)
         console.addGestureRecognizer(tap1)
 
         // Both on the right (not left) so the automatic back button stays visible.
@@ -147,8 +151,58 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         layoutErrorStrips()
     }
 
+    // Not viewDidLoad: the typing has to be watched to be worth doing, and at load the
+    // view is not on screen yet - the whole animation would be over before the push
+    // finished. The flag is because this runs again on every return from Help or the
+    // scanner, and a program the user has started writing must not be typed over.
+    override func viewDidAppear(_ animated: Bool) {
+        super.viewDidAppear(animated)
+        guard !hasOpened else { return }
+        hasOpened = true
+        if coordinator!.fileURL.isEmpty { typeIn(Self.reindented(source)) }
+    }
+
+    private var hasOpened = false
+    private var typingTimer: Timer?
+
+    // The starting program arrives a character at a time, so a first-time user sees where
+    // a program comes from - typed, by them, in a moment - rather than finding one already
+    // sitting there. About 40ms a character: quick enough not to be a wait, slow enough
+    // that the three lines land one after another.
+    //
+    // The editor is not editable while this runs. A caret in text that is still arriving
+    // would be somewhere else a moment later, and a keystroke would land in the middle of
+    // it; when the typing stops the editor is handed back exactly as the user expects to
+    // find it.
+    private func typeIn(_ text: String) {
+        typingTimer?.invalidate()
+        program.text = ""
+        programChanged()
+        program.isEditable = false
+
+        let characters = Array(text)
+        var typed = 0
+        typingTimer = Timer.scheduledTimer(withTimeInterval: 0.04, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            guard typed < characters.count else {
+                timer.invalidate()
+                self.typingTimer = nil
+                self.program.isEditable = true
+                return
+            }
+            self.program.text.append(characters[typed])
+            typed += 1
+            // Per character, so the colouring and the line numbers arrive with the text
+            // rather than snapping into place at the end.
+            self.programChanged()
+        }
+    }
+
     deinit {
         NotificationCenter.default.removeObserver(self)
+        // The timer holds this controller only weakly, but a timer still firing into a
+        // screen the user has left is work nobody asked for.
+        typingTimer?.invalidate()
     }
 
     // Four levels, in the conventional colours: a reader should not have to learn a
@@ -628,16 +682,21 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         return true
     }
     
+    // Double-tapping the console fills an empty editor with something that runs.
+    //
+    // It used to build that from the console's own text, taking lines 5, 6, 7, 18 and 8
+    // by number. Those were positions inside the template sheet that was printed into the
+    // console at launch; once nothing printed it, line 18 was usually not there at all and
+    // the subscript trapped - and on the runs where the console did have 19 lines, it
+    // spliced five unrelated lines of program output into the editor and called it a
+    // program. Both failures come from addressing text by line number that was never
+    // promised to be there.
+    //
+    // The same starting program the editor opens with is what it seeds now: fixed, known
+    // to parse, and owing nothing to whatever the console happens to be showing.
     @objc func doubleTapped() {
-        if program.text.isEmpty {
-            let x = console.text.components(separatedBy: ["\n"])
-            program.text += x[5] + "\n"
-            program.text += x[6] + "\n"
-            program.text += x[7] + "\n  "
-            program.text += x[18] + "\n"
-            program.text += x[8] + "\n"
-            programChanged()
-        }
+        guard program.text.isEmpty else { return }
+        typeIn(Self.reindented(source))
     }
     
     // One way only. This fires for the gutter's own scrolling too, and answering that by
@@ -865,7 +924,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     @objc private func textTapped(_ tapGesture: UITapGestureRecognizer) {
         let textView = tapGesture.view as? UITextView
         let point = tapGesture.location(in: textView!)
-        if let detectedWord = getWordAtPosition(tapGesture, point) {
+        // A tap below the last line of output finds an empty line, and copying that into
+        // the editor added a blank line for every miss.
+        if let detectedWord = getWordAtPosition(tapGesture, point),
+           !detectedWord.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             if self.count == 0 {
                 program.text += detectedWord + "\n"
                 programChanged()
@@ -890,12 +952,50 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         if coordinator.fileURL.isEmpty {
             promptForFileName { [weak self] name in
                 guard let self = self, let name = name else { return }
-                self.coordinator?.fileURL = name
-                self.save(fileName: name)
+                let fileName = Self.named(name)
+                // Before the write, so the name is in the file and not only in the editor.
+                self.writeNameHeader(fileName)
+                self.coordinator?.fileURL = fileName
+                self.save(fileName: fileName)
             }
         } else {
             save(fileName: coordinator.fileURL)
         }
+    }
+
+    // The name the user typed, as it will be on disk. One rule, used by the save itself
+    // and by the header written into the program, so the two cannot disagree.
+    static func named(_ name: String) -> String {
+        (name as NSString).pathExtension == "shm" ? name : name + ".shm"
+    }
+
+    // A program on disk knows its name; a program on screen does not, and the editor shows
+    // no filename anywhere. So the name goes into the source as its first line, the way
+    // every file in Examples/ already opens - the program carries its own name from then
+    // on, into a scan, a share, or a paste somewhere else.
+    //
+    // A header already there is replaced rather than stacked, so saving twice does not
+    // leave two names at the top of the file. Anything else on the first line is a comment
+    // the user wrote, and the name goes above it.
+    private func writeNameHeader(_ fileName: String) {
+        let header = "// " + fileName
+        var lines = (program.text ?? "").components(separatedBy: "\n")
+        if let first = lines.first, Self.isNameHeader(first) {
+            lines[0] = header
+        } else {
+            lines.insert(header, at: 0)
+        }
+        program.text = lines.joined(separator: "\n")
+        programChanged()
+    }
+
+    // "// something.shm" and nothing else on the line - the shape this writes, so that it
+    // recognises its own work and not a comment that merely mentions a file.
+    private static func isNameHeader(_ line: String) -> Bool {
+        let text = line.trimmingCharacters(in: .whitespaces)
+        guard text.hasPrefix("//"), text.hasSuffix(".shm") else { return false }
+        let name = text.dropFirst(2).trimmingCharacters(in: .whitespaces)
+        return !name.contains(" ") && name.count > ".shm".count
     }
 
     private func promptForFileName(completion: @escaping (String?) -> Void) {
@@ -915,12 +1015,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         do {
             let docDirURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
             // fileName is already extensioned when re-saving an existing file (coordinator.fileURL
-            // is the file's full name as listed on the home screen); only append ".shm" for a
-            // brand-new name typed into the save prompt, so re-saving doesn't produce "x.shm.shm".
-            var fileURL = docDirURL.appendingPathComponent(fileName)
-            if fileURL.pathExtension != "shm" {
-                fileURL = fileURL.appendingPathExtension("shm")
-            }
+            // is the file's full name as listed on the home screen); named() only appends ".shm"
+            // for a brand-new name typed into the save prompt, so re-saving doesn't produce
+            // "x.shm.shm".
+            let fileURL = docDirURL.appendingPathComponent(Self.named(fileName))
             try program.text.write(to: fileURL, atomically: true, encoding: String.Encoding.utf8)
         } catch let error as NSError {
             print(error)
