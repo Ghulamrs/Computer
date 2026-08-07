@@ -3,7 +3,7 @@
 //  Computer: G. R. Akhtar
 //
 //  Created by Home on 1/08/26.
-//  Copyright © 2026 Home. All rights reserved.
+//  Copyright © 2019-2026 G. R. Akhtar. All rights reserved.
 //
 
 import UIKit

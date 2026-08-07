@@ -3,7 +3,7 @@
 //  Computer: G. R. Akhtar
 //
 //  Created by Home on 5/21/19.
-//  Copyright © 2019 Home. All rights reserved.
+//  Copyright © 2019-2026 G. R. Akhtar. All rights reserved.
 //
 
 import UIKit
@@ -109,7 +109,9 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // storyboard's 20pt ever changes, and pinned to the safe area so it clears the
         // home indicator.
         let tagline = UILabel()
-        tagline.text = "Shalimar 3.0, A mini language compiler."
+        // The years in the same short form as the run banner and the reference footer, so
+        // the three places the app names itself all say the same thing.
+        tagline.text = "©2019-26 Shalimar 3.0, A mini language compiler."
         tagline.font = UIFont.systemFont(ofSize: 11, weight: .medium)
         // Embossed: the letter is the pale face catching the light and the shadow falls
         // below it, darker, so the line reads as standing off the page. Reversing those

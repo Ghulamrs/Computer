@@ -465,7 +465,7 @@ final class HelpViewController: UIViewController {
 
     =============================
     Shalimar 3.0
-    (c) G. R. Akhtar, Islamabad
+    (c) 2019-26 G. R. Akhtar, Islamabad
     August 07, 2026
     =============================
     """
