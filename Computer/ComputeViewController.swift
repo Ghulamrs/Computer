@@ -98,6 +98,48 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         console.textColor = ConsoleStyle.output.color
         console.isScrollEnabled = true
         console.isEditable = false
+
+        // The storyboard leaves 20pt between the console and the safe area, which was
+        // nothing but white. A line fits there exactly, and it is the one place in the
+        // editor that can say what the app is without taking room from the program or the
+        // output. Grey, at the console banner's weight: it is the room's label, not
+        // something to be read twice.
+        //
+        // Constrained to the gap rather than given a height, so it stays put if the
+        // storyboard's 20pt ever changes, and pinned to the safe area so it clears the
+        // home indicator.
+        let tagline = UILabel()
+        tagline.text = "Shalimar 3.0, A mini language compiler."
+        tagline.font = UIFont.systemFont(ofSize: 11, weight: .medium)
+        // Embossed: the letter is the pale face catching the light and the shadow falls
+        // below it, darker, so the line reads as standing off the page. Reversing those
+        // two is the whole difference - a shadow lighter than the letter presses it in
+        // instead, which is what this looked like before.
+        //
+        // The editor's own violet, so the footer belongs to the language rather than
+        // standing as a fourth signal beside output, warning and error. Red was the
+        // obvious choice and the wrong one: this app spends red on things that went
+        // wrong, and a red line sitting on screen at all times is red that never means a
+        // problem - which is how a reader learns to stop seeing it.
+        //
+        // The shadow is a deeper shade of the same violet, not a grey: a raised thing
+        // casts its shadow in its own colour, and a grey edge under a violet face reads
+        // as two materials rather than one letter with a lit top.
+        tagline.textColor = Self.codeColour
+        tagline.shadowColor = UIColor(displayP3Red: 0.32, green: 0.08, blue: 0.42, alpha: 1)
+        tagline.shadowOffset = CGSize(width: 0, height: 1)
+        tagline.textAlignment = .center
+        tagline.adjustsFontSizeToFitWidth = true
+        tagline.minimumScaleFactor = 0.8
+        tagline.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(tagline)
+        NSLayoutConstraint.activate([
+            tagline.topAnchor.constraint(equalTo: console.bottomAnchor),
+            tagline.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor),
+            tagline.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
+            tagline.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16)
+        ])
+
         // A new program is typed in rather than pasted in, once the view is on screen -
         // see viewDidAppear. An opened file is not: watching a file you already wrote
         // being retyped would be a wait, not a welcome.
@@ -118,14 +160,37 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         console.addGestureRecognizer(tap1)
 
         // Both on the right (not left) so the automatic back button stays visible.
-        navigationItem.rightBarButtonItems = [
-            UIBarButtonItem(image: UIImage(systemName: "doc.text.viewfinder"),
-                style: .plain, target: self, action: #selector(scanTapped)),
-            UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.down"),
-                style: .plain, target: self, action: #selector(saveTapped)),
-            UIBarButtonItem(image: UIImage(systemName: "questionmark.circle"),
-                style: .plain, target: self, action: #selector(helpTapped))
-        ]
+        //
+        // A colour each, at the top of the P3 gamut: these are the pure primaries, not
+        // sRGB's, so they are as saturated as the screen can render. The pill behind them
+        // is a pale pink - sampled at (1.0, 0.78, 1.0) - which is why "brighter" here means
+        // more chroma and not more light: the pale blue these started as measured 1.4:1
+        // against it and the pure one below holds 4.6:1.
+        //
+        // Green is the exception and cannot be pushed with the other two. Its pure form is
+        // the lightest primary there is, so on a pale ground it goes the wrong way - full
+        // P3 green measures 1.04:1 on this pill, a glyph you cannot find. This is the most
+        // saturated green that still carries; a brighter one needs a darker pill.
+        // The colours are already fully opaque, so what makes them read stronger is ink,
+        // not alpha: a heavier stroke, and the filled variant of the two symbols that have
+        // one. A filled glyph is several times the coloured area of its outline, which is
+        // the only lever left for the green - it cannot be brightened, but it can cover
+        // more of the pill.
+        let heavy = UIImage.SymbolConfiguration(pointSize: 19, weight: .bold)
+
+        let scan = UIBarButtonItem(image: UIImage(systemName: "doc.text.viewfinder", withConfiguration: heavy),
+            style: .plain, target: self, action: #selector(scanTapped))
+        scan.tintColor = UIColor(displayP3Red: 1.0, green: 1.0, blue: 0.0, alpha: 1)
+
+        let save = UIBarButtonItem(image: UIImage(systemName: "square.and.arrow.down.fill", withConfiguration: heavy),
+            style: .plain, target: self, action: #selector(saveTapped))
+        save.tintColor = UIColor(displayP3Red: 0.0, green: 0.70, blue: 0.10, alpha: 1)
+
+        let help = UIBarButtonItem(image: UIImage(systemName: "questionmark.circle.fill", withConfiguration: heavy),
+            style: .plain, target: self, action: #selector(helpTapped))
+        help.tintColor = UIColor(displayP3Red: 0.0, green: 0.25, blue: 1.0, alpha: 1)
+
+        navigationItem.rightBarButtonItems = [scan, save, help]
 
         // Lives in the nav bar (as titleView, dead center) instead of docked below the
         // editor, so the on-screen keyboard - which covers the bottom of the screen -
@@ -959,6 +1024,11 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                 self.save(fileName: fileName)
             }
         } else {
+            // A stamp that says when the file was saved has to mean the last save, not the
+            // first, or it is a date that quietly goes wrong. Only files that already carry
+            // one are touched: a program without a header keeps whatever the user wrote at
+            // the top of it.
+            refreshSavedStamp()
             save(fileName: coordinator.fileURL)
         }
     }
@@ -977,16 +1047,41 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // A header already there is replaced rather than stacked, so saving twice does not
     // leave two names at the top of the file. Anything else on the first line is a comment
     // the user wrote, and the name goes above it.
+    // The name, then when it was saved. Two lines, written and replaced as a pair, so a
+    // second save updates the header rather than stacking another one above it.
     private func writeNameHeader(_ fileName: String) {
-        let header = "// " + fileName
         var lines = (program.text ?? "").components(separatedBy: "\n")
-        if let first = lines.first, Self.isNameHeader(first) {
-            lines[0] = header
-        } else {
-            lines.insert(header, at: 0)
-        }
+        // How much of what is already there is this header's own, and so may be replaced:
+        // the name line, and the stamp under it if that is there too. Everything below is
+        // the user's and is left where it is.
+        var existing = 0
+        if let first = lines.first, Self.isNameHeader(first) { existing = 1 }
+        if lines.count > existing, Self.isTimeStamp(lines[existing]) { existing += 1 }
+
+        lines.replaceSubrange(0..<existing, with: ["// " + fileName, Self.timeStamp()])
         program.text = lines.joined(separator: "\n")
         programChanged()
+    }
+
+    // Re-saving a file that already carries a header: the time changes, the name does not.
+    private func refreshSavedStamp() {
+        var lines = (program.text ?? "").components(separatedBy: "\n")
+        guard let first = lines.first, Self.isNameHeader(first),
+              lines.count > 1, Self.isTimeStamp(lines[1]) else { return }
+        lines[1] = Self.timeStamp()
+        program.text = lines.joined(separator: "\n")
+        programChanged()
+    }
+
+    // "March 23, 2026. 7:00 AM" - written out, the way the date at the foot of the
+    // reference is. The month is a name rather than a number, which is what keeps 03/04
+    // from being read as the wrong day; the POSIX locale pins the English names and the
+    // AM/PM, so the line is the same string on a phone set to any calendar or numerals.
+    private static func timeStamp() -> String {
+        let stamp = DateFormatter()
+        stamp.locale = Locale(identifier: "en_US_POSIX")
+        stamp.dateFormat = "MMMM d, yyyy. h:mm a"
+        return "// " + stamp.string(from: Date())
     }
 
     // "// something.shm" and nothing else on the line - the shape this writes, so that it
@@ -996,6 +1091,16 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         guard text.hasPrefix("//"), text.hasSuffix(".shm") else { return false }
         let name = text.dropFirst(2).trimmingCharacters(in: .whitespaces)
         return !name.contains(" ") && name.count > ".shm".count
+    }
+
+    // Likewise narrow: a comment holding a date in exactly the shape written above and
+    // nothing else. With no word in front of it, the pattern is all there is to go on, so
+    // it is matched whole - a comment that merely mentions a month is not one of these
+    // and is not overwritten.
+    private static func isTimeStamp(_ line: String) -> Bool {
+        let text = line.trimmingCharacters(in: .whitespaces)
+        return text.range(of: "^// [A-Z][a-z]+ [0-9]{1,2}, [0-9]{4}\\. [0-9]{1,2}:[0-9]{2} (AM|PM)$",
+                          options: .regularExpression) != nil
     }
 
     private func promptForFileName(completion: @escaping (String?) -> Void) {

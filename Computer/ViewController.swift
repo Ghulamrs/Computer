@@ -24,8 +24,26 @@ class FirstViewController: UITableViewController, Storyboarded {
     override func viewDidLoad() {
         super.viewDidLoad()
 
-        // Do any additional setup after loading the view.
         title = "Shalimar"
+        // The app's own name, given the weight of one: 30pt heavy against the 17pt
+        // semibold every other screen's title uses. Only this screen - the appearance is
+        // set on the navigation item rather than on the bar, so "Shalimar Reference" and
+        // the editor's own bar are untouched.
+        //
+        // Green rather than the yellow the bar sets, and as deep a green as the purple
+        // behind it allows: a true dark green measures 1.3:1 there, which is a title you
+        // cannot read, where this holds 3.5:1 and still reads as green rather than mint.
+        let appearance = UINavigationBarAppearance()
+        appearance.configureWithOpaqueBackground()
+        appearance.backgroundColor = UIColor.purple
+        appearance.titleTextAttributes = [
+            .foregroundColor: UIColor(displayP3Red: 0.0, green: 0.70, blue: 0.25, alpha: 1),
+            .font: UIFont.systemFont(ofSize: 30, weight: .heavy)
+        ]
+        navigationItem.standardAppearance = appearance
+        navigationItem.scrollEdgeAppearance = appearance
+        navigationItem.compactAppearance = appearance
+
         navigationItem.rightBarButtonItem = UIBarButtonItem(
             barButtonSystemItem: .add, target: self, action: #selector(newProgramTapped))
     }
