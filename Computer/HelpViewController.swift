@@ -77,21 +77,18 @@ final class HelpViewController: UIViewController {
       }
 
     Press the green arrow to run. Messages
-    appear in the
-    console below the editor.
+    appear in the console below the editor.
 
     TWO RULES THAT CATCH EVERYONE
     -----------------------------
     1. A print command opens its line. Nothing
-    may come
-       before it on that line.
+       may come before it on that line.
 
-         ? "ok"          works
-         x : 1 ? x     Error: must start its line
+         ? "ok"     works
+         x : 1 ? x  Error: must start its line
 
     2. Declarations sit at the top of a
-    function, never
-       inside an if or a loop.
+       function, never inside an if or a loop.
 
          fun <> = main() {
            int c : 0
@@ -109,10 +106,8 @@ final class HelpViewController: UIViewController {
       char[]   text, written as char name[size]
 
     There are no other types. An array of any
-    type is
-    written with [] sizes; text is the
-    one-dimensional
-    array of char.
+    type is written with [] sizes; text is the
+    one-dimensional array of char.
 
     DECLARING
     ---------
@@ -126,8 +121,7 @@ final class HelpViewController: UIViewController {
       int   cube[2][3][5]
 
     A size must be a whole number, 1 or more. It
-    is fixed
-    when the declaration runs.
+    is fixed when the declaration runs.
 
     A scalar may also be created by assigning to
     it:
@@ -173,7 +167,7 @@ final class HelpViewController: UIViewController {
       x : 5           assign
       x +: 1          add and assign
       x -: 1          subtract and assign
-      x = 5           also assigns; ':' preferred
+      x = 5           also assigns; prefer ':'
 
     NUMBERS
     -------
@@ -185,8 +179,8 @@ final class HelpViewController: UIViewController {
       3.0e8           real
 
     A number with a point or an exponent is
-    real. A real
-    assigned into an int drops the fraction.
+    real. A real assigned into an int drops the
+    fraction.
 
     PRINTING
     --------
@@ -206,18 +200,15 @@ final class HelpViewController: UIViewController {
     PRECISION
     ---------
     A real prints to 7 decimal places, 6 inside
-    a grid.
-    Change it inside a print command:
+    a grid. Change it inside a print command:
 
       ? prec(12) 1./3.      0.333333333333
       ? prec(2)  1./3.      0.33
       ? prec(-1) 1./3.      back to normal
 
     prec(n) runs from -1 to 24. It applies from
-    that point
-    on, including the rest of its own line. -1
-    restores the
-    default.
+    that point on, including the rest of its own
+    line. -1 restores the default.
 
     OPERATORS
     ---------
@@ -235,8 +226,7 @@ final class HelpViewController: UIViewController {
       |
 
     ^ groups to the right: 2^3^2 is 2^9, not
-    8^2.
-    Watch unary minus: -2^2 is 4, not -4.
+    8^2. Watch unary minus: -2^2 is 4, not -4.
 
     Dividing two ints gives an int: 7/2 is 3.
     Use reals for a real answer: 7./2. is 3.5.
@@ -274,9 +264,8 @@ final class HelpViewController: UIViewController {
       }
 
     'for i < n' is short for 'for i : 0 to n -
-    1', which is
-    the loop that walks an array. It takes a
-    step too.
+    1', which is the loop that walks an array.
+    It takes a step too.
 
     The counter belongs to the loop and
     disappears after it.
@@ -296,26 +285,23 @@ final class HelpViewController: UIViewController {
       }
 
     Two or more returned values need
-    parentheses, and are
-    received with < >:
+    parentheses, and are received with < >:
 
       <q,r> : divide(17, 5)
 
     A function that declares outputs must return
-    them on
-    every path.
+    them on every path.
 
     main() takes no inputs.
 
     ARGUMENTS
     ---------
     A single value is passed by copy - changing
-    it inside
-    the function does not affect the caller.
+    it inside the function does not affect the
+    caller.
 
     An array is passed by reference. The
-    function works on
-    the caller's array:
+    function works on the caller's array:
 
       fun <> = fill(v[]: real) {
         for i < v.row {
@@ -324,8 +310,7 @@ final class HelpViewController: UIViewController {
       }
 
     This is how a function hands an array back,
-    because an
-    array cannot be returned in < >.
+    because an array cannot be returned in < >.
 
     ARRAY SIZE
     ----------
@@ -335,24 +320,21 @@ final class HelpViewController: UIViewController {
       len(A)      same as A.row
 
     A.row is A.dim(0) and A.col is A.dim(1), at
-    any number
-    of dimensions. Asking for a dimension the
-    array does
-    not have answers -1:
+    any number of dimensions. Asking for a
+    dimension the array does not have answers
+    -1:
 
       real v[10]
       ? v.row        10
       ? v.col        -1
 
     These are read from the array itself, so a
-    function
-    can measure an array it was given.
+    function can measure an array it was given.
 
     STRINGS
     -------
     Text is char[]. The size is capacity; the
-    text inside
-    can be shorter.
+    text inside can be shorter.
 
       char a[20] : "alice"
       char b[128] : "bob"
@@ -364,19 +346,16 @@ final class HelpViewController: UIViewController {
       a +: "!"
 
     Compare with = != < >, join with +, append
-    with +:.
-    Comparison reads the text, not the capacity,
-    so the
-    same name in a char[20] and a char[128] is
-    equal.
+    with +:. Comparison reads the text, not the
+    capacity, so the same name in a char[20] and
+    a char[128] is equal.
 
     Ordering is by character code, so capitals
-    come before
-    lower case: "Zoe" is before "adam".
+    come before lower case: "Zoe" is before
+    "adam".
 
     Joining into a fixed array fits that array;
-    anything
-    past the end is dropped.
+    anything past the end is dropped.
 
     CHARACTERS
     ----------
@@ -393,8 +372,7 @@ final class HelpViewController: UIViewController {
       ? char(int(s[0])-32) A
 
     char(0) is the end-of-text marker, which is
-    how the
-    length of the text inside is found.
+    how the length of the text inside is found.
 
     CONVERSIONS
     -----------
@@ -407,24 +385,36 @@ final class HelpViewController: UIViewController {
 
     BUILT-IN FUNCTIONS
     ------------------
-      abs(x)      sqrt(x)     log(x)
+      abs(x)      sqrt(x)     hypot(x,y)
+      log(x)      exp(x)
       sin(x)      cos(x)      tan(x)
       asin(x)     acos(x)     atan(x)
       atan2(y,x)  pow(x,y)
       round(x)    ceil(x)     floor(x)
+      trunc(x)
       max(a,b)    min(a,b)
       len(A)
       int(x)      real(x)     char(x)
 
     Angles are in radians.
 
+    hypot(x,y) is sqrt(x*x + y*y) without the
+    overflow. exp(x) is the inverse of log(x).
+
+    trunc(x) drops the fraction toward zero like
+    int(x), but the result stays real, so it
+    holds magnitudes int(x) has to refuse.
+
+      ? trunc(-2.7)          -2.0000000
+      ? int(-2.7)            -2
+
     CONSTANTS
     ---------
       pi          3.141592653589793
+      e           2.718281828459045
 
-    pi is read-only. It cannot be declared,
-    assigned, or
-    used as a name.
+    pi and e are read-only. Neither can be
+    declared, assigned, or used as a name.
 
       ? sin(90. * pi / 180.)      1.0000000
 
@@ -438,21 +428,18 @@ final class HelpViewController: UIViewController {
       Warning:  the program runs anyway
 
     Every message names its line. A warning
-    appears for a
-    function that is never called, and for a
-    name that
-    hides a global.
+    appears for a function that is never called,
+    and for a name that hides a global.
 
     LIMITS
     ------
-      int              about -2 to +2 billion
+      int          about -2 to +2 billion
       recursion    256/(inputs+1) per function
-      call depth       1024 frames in total
-      prec(n)          -1 to 24
+      call depth   1024 frames in total
+      prec(n)      -1 to 24
 
     Passing an int limit is an error, never a
-    wrong answer
-    that looks right.
+    wrong answer that looks right.
 
     NOT INCLUDED
     ------------
@@ -470,15 +457,11 @@ final class HelpViewController: UIViewController {
     WRITING FOR THE CAMERA
     ----------------------
     The scanner reads printed or clearly written
-    code.
-    Shalimar is ASCII, so a curly quote, a dash
-    that is
-    not a hyphen, or a Cyrillic letter that
-    looks Latin
-    are all rejected rather than silently
-    accepted -
-    the message names the character and its
-    code.
+    code. Shalimar is ASCII, so a curly quote, a
+    dash that is not a hyphen, or a Cyrillic
+    letter that looks Latin are all rejected
+    rather than silently accepted - the message
+    names the character and its code.
 
     =============================
     Shalimar 3.0
