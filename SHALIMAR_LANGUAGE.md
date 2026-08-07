@@ -171,8 +171,10 @@ An int literal that does not fit `Int32` is a lex error naming the limit and sug
 trailing dot is fine: `1.` is `1.0`.
 
 > **2.x note.** Exponent notation did not exist; `1e10` lexed as `1` followed by the identifier
-> `e10`. The 2.x constant `e` is *not* restored, precisely because that letter now belongs to the
-> exponent when it follows a digit.
+> `e10`. The constant `e` was withheld for a time on the reasoning that the letter now belongs to
+> the exponent when it follows a digit; it is back ([§12](#12-built-in-functions-and-constants)),
+> because the lexer separates the two cleanly — `2e5` is one number, `? 2 e` is two items, and a
+> name like `e5` is untouched. The objection was readability, not ambiguity.
 
 **Implementation note — the scan is looser than the grammar.** The lexer consumes any run of digits
 and dots, and an exponent whose digits may be *absent* (`[0-9]*`, not `[0-9]+`). So `1.2.3`, `1e` and
@@ -886,15 +888,18 @@ exist.
 
 | Function | Args | Notes |
 |---|---|---|
-| `abs(x)` | 1 | |
+| `abs(x)` | 1 | int in, int out; otherwise real |
 | `sqrt(x)` | 1 | `nan` for negative `x`, not an error |
 | `log(x)` | 1 | natural log |
+| `exp(x)` | 1 | inverse of `log`; `exp(1.)` is `e` |
+| `hypot(x,y)` | 2 | `sqrt(x*x + y*y)` without the overflow |
 | `sin(x)` `cos(x)` `tan(x)` | 1 | radians |
 | `asin(x)` `acos(x)` `atan(x)` | 1 | radians |
 | `atan2(y,x)` | 2 | |
 | `pow(x,y)` | 2 | same as `x^y` |
 | `round(x)` | 1 | half away from zero |
 | `ceil(x)` `floor(x)` | 1 | |
+| `trunc(x)` | 1 | toward zero, but stays `real` — see below |
 | `max(a,b)` `min(a,b)` | 2 | int in, int out; otherwise real |
 | `len(A)` | 1 | element count of the first dimension; capacity for a string |
 | `int(x)` `real(x)` `char(x)` | 1 | conversions, see below |
@@ -908,14 +913,28 @@ take a built-in's name.
 | Constant | Value |
 |---|---|
 | `pi` | 3.141592653589793 |
+| `e` | 2.718281828459045 |
 
-`pi` is **read-only and reserved**: it cannot be declared, assigned, taken as a parameter name, or
-used as a loop counter.
+`pi` and `e` are **read-only and reserved**: neither can be declared, assigned, taken as a parameter
+name, or used as a loop counter.
+
+**`trunc` is not `int`.** Both truncate toward zero, but `int()` returns an `int` and fails outside
+its range, while `trunc` stays `real` and so handles any magnitude:
+
+```
+? int(2.7) int(-2.7)      // 2 -2
+? trunc(2.7) trunc(-2.7)  // 2.0000000 -2.0000000
+? trunc(3000000000.7)     // 3000000000.0000000
+? int(3000000000.)        // Error - Cannot convert 3000000000.0 to int
+```
+
+There is no `fmod`: the `%` operator already does it on reals, with C's sign-follows-the-dividend
+rule. There is no `modf` either — builtins return exactly one value, and with `trunc` present it is
+two lines: `i : trunc(x)` then `f : x - i`.
 
 > **2.x note.** Constants were resolved *last*, behind locals and globals, so a variable of the same
 > name shadowed them. That does not survive a checker which defines a variable on first assignment —
-> `pi : 3` would quietly overwrite the constant rather than shadow it. One name, one meaning. The 2.x
-> constant `e` is not restored ([§2.3](#23-numbers)).
+> `pi : 3` would quietly overwrite the constant rather than shadow it. One name, one meaning.
 
 ### 12.1 Conversions
 

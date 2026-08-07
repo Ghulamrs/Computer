@@ -276,10 +276,42 @@ fun <> = main() { f(1.) }'
 t "pi cannot be a loop counter" "'pi' is a constant" 'fun <> = main() { for pi < 3 {
 ?? pi }
 ? "" }'
-# 'e' is deliberately not restored: exponent notation now owns that letter next to a
-# digit, and a bare 'e' beside numbers reads as a typo for 1e5 rather than as Euler.
-t "e is not a constant" "Undefined variable 'e'" 'fun <> = main() {
+
+# exp/hypot/trunc, added alongside 'e'. trunc is not int(): it truncates the same way
+# but stays real, so it handles magnitudes int() has to refuse.
+t "exp" "2.7182818" 'fun <> = main() {
+? exp(1.) }'
+t "exp inverts log" "2.5000000" 'fun <> = main() {
+? log(exp(2.5)) }'
+t "hypot" "5.0000000" 'fun <> = main() {
+? hypot(3.,4.) }'
+t "trunc stays real" "2.0000000 -2.0000000" 'fun <> = main() {
+? trunc(2.7) trunc(-2.7) }'
+t "trunc past int range" "3000000000.0000000" 'fun <> = main() {
+? trunc(3000000000.7) }'
+t "int() still refuses that" "Cannot convert" 'fun <> = main() {
+? int(3000000000.) }'
+# abs is generic like max/min now - an int in, an int out. It used to be declared unary,
+# so abs(-5) came back 5.0000000 while max(3,4) stayed 4.
+t "abs of an int stays int" "5" 'fun <> = main() { n : -5
+? abs(n) }'
+t "abs of a real stays real" "5.5000000" 'fun <> = main() {
+? abs(-5.5) }'
+# Swift's abs() traps on Int32.min, which is the uncatchable class - it must report.
+t "abs(Int32.min) reports" "overflows int" 'fun <> = main() { n : -2147483647
+n : n - 1
+? abs(n) }'
+# 'e' was withheld through early 3.0, on the reasoning that exponent notation owns that
+# letter next to a digit and a bare 'e' beside numbers reads as a typo for 1e5. It is
+# restored now that exp() exists: log's inverse wants its constant, and the lexer turns
+# out to separate the two cleanly - '? 2 e' is two items, '? 2e5' is one number, and a
+# name like e5 is unaffected. The objection was readability, not ambiguity.
+t "e is a constant" "2.7182818" 'fun <> = main() {
 ? e }'
+t "e cannot be assigned" "'e' is a constant" 'fun <> = main() { e : 5
+? e }'
+t "log(e) is 1" "1.0000000" 'fun <> = main() {
+? log(e) }'
 
 # ------------------------------------------- strings: compare, order, concatenate
 # Two strings are the one array pairing the operators accept. Comparison reads the text
@@ -398,7 +430,9 @@ t "exponent sign with no digits" "Malformed number '1e-'" 'fun <> = main() { x :
 # The exponent must not swallow an ordinary subtraction, or a name that begins with e.
 t "plain subtraction unaffected" "1" 'fun <> = main() {
 ? 2-1 }'
-t "e is still a usable name" "2 5" 'fun <> = main() { e : 5
+t "a name beginning with e is unaffected" "2 7" 'fun <> = main() { e5 : 7
+? 2 e5 }'
+t "e beside a number stays two items" "2 2.7182818" 'fun <> = main() {
 ? 2 e }'
 
 # ------------------------------------------------- ? prec(n) print precision

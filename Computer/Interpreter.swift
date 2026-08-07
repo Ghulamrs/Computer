@@ -156,7 +156,7 @@ final class Interpreter {
     private var totalCallDepth = 0
     private static let totalDepthLimit = 1024
 
-    private static let constants: [String: Value] = ["pi": .real(Double.pi)]
+    private static let constants: [String: Value] = ["pi": .real(Double.pi), "e": .real(M_E)]
 
     private enum Flow {
         case normal
@@ -765,21 +765,37 @@ final class Interpreter {
             let x = try number(a, line), y = try number(b, line)
             return [.real(node.callee == "max" ? Swift.max(x, y) : Swift.min(x, y))]
 
+        case "abs":
+            let a = try evaluate(node.arguments[0])
+            if case .int(let x) = a {
+                // Swift's abs() traps on Int32.min, whose magnitude is one past Int32.max -
+                // the same uncatchable class the rest of this file guards against. Negating
+                // through subtractingReportingOverflow reports it as an ordinary error.
+                if x >= 0 { return [.int(x)] }
+                let (negated, overflow) = Int32(0).subtractingReportingOverflow(x)
+                guard !overflow else {
+                    throw RuntimeError(message: "abs(\(x)) overflows int - use real", line: line)
+                }
+                return [.int(negated)]
+            }
+            return [.real(Swift.abs(try number(a, line)))]
+
         default:
             break
         }
 
         let unary: [String: (Double) -> Double] = [
-            "abs": abs, "sqrt": sqrt, "log": log,
+            "sqrt": sqrt, "log": log, "exp": exp,
             "sin": sin, "cos": cos, "tan": tan,
             "asin": asin, "acos": acos, "atan": atan,
-            "round": { $0.rounded(.toNearestOrAwayFromZero) }, "ceil": ceil, "floor": floor
+            "round": { $0.rounded(.toNearestOrAwayFromZero) },
+            "ceil": ceil, "floor": floor, "trunc": trunc
         ]
         if let function = unary[node.callee] {
             return [.real(function(try number(try evaluate(node.arguments[0]), line)))]
         }
 
-        let binary: [String: (Double, Double) -> Double] = ["atan2": atan2, "pow": pow]
+        let binary: [String: (Double, Double) -> Double] = ["atan2": atan2, "pow": pow, "hypot": hypot]
         if let function = binary[node.callee] {
             let a = try number(try evaluate(node.arguments[0]), line)
             let b = try number(try evaluate(node.arguments[1]), line)

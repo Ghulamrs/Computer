@@ -43,11 +43,15 @@ final class Checker {
     private static let binary = Builtin(inputs: [.real, .real], output: .real, generic: false)
 
     private static let builtins: [String: Builtin] = [
-        "abs": unary, "sqrt": unary, "log": unary,
+        "sqrt": unary, "log": unary, "exp": unary,
         "sin": unary, "cos": unary, "tan": unary,
         "asin": unary, "acos": unary, "atan": unary,
-        "round": unary, "ceil": unary, "floor": unary,
-        "atan2": binary, "pow": binary,
+        "round": unary, "ceil": unary, "floor": unary, "trunc": unary,
+        "atan2": binary, "pow": binary, "hypot": binary,
+        // Generic like max/min rather than unary: an int going in should come back an
+        // int. 'abs' was the odd one out - abs(-5) returned 5.0000000 while max(3,4)
+        // stayed 4, for no reason a reader could see.
+        "abs": Builtin(inputs: [.real], output: .real, generic: true),
         "max": Builtin(inputs: [.real, .real], output: .real, generic: true),
         "min": Builtin(inputs: [.real, .real], output: .real, generic: true),
         "len": Builtin(inputs: [.array(.real)], output: .int, generic: true),
@@ -61,7 +65,7 @@ final class Checker {
     // same name shadowed them - but with a checker that defines on first assignment, that
     // arrangement means 'pi : 3' silently overwrites the constant instead of shadowing it.
     // One name, one meaning, and a diagnostic that says so.
-    private static let constants: [String: ShalimarType] = ["pi": .real]
+    private static let constants: [String: ShalimarType] = ["pi": .real, "e": .real]
 
     // The three conversions are handled as a group: each takes any scalar and produces
     // the type it is named for. Their declared input types above exist only to give the
