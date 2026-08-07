@@ -151,19 +151,34 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         NotificationCenter.default.removeObserver(self)
     }
 
-    // Three levels, in the conventional colours: a reader should not have to learn a
-    // private scheme to tell a result from a complaint.
+    // Four levels, in the conventional colours: a reader should not have to learn a
+    // private scheme to tell a result from a complaint. System is the odd one - it is not
+    // about the program at all, so it is the quietest thing in the pane: grey, at 3.9:1
+    // where a program's own output has 15:1, said once and not competing to be read.
     enum ConsoleStyle {
-        case output, warning, error
+        case system, output, warning, error
 
         var color: UIColor {
             switch self {
+            case .system:  return UIColor(white: 0.45, alpha: 1)
             case .output:  return UIColor(white: 0.10, alpha: 1)
             case .warning: return UIColor(displayP3Red: 0.70, green: 0.42, blue: 0.0, alpha: 1)
             case .error:   return UIColor(displayP3Red: 0.75, green: 0.0, blue: 0.05, alpha: 1)
             }
         }
     }
+
+    // Printed at the head of every run. The flag is a two-scalar regional indicator pair,
+    // written in escapes rather than pasted so the source stays ASCII like the language
+    // it hosts. The blank line at the end is what separates it from the program's own
+    // first line of output.
+    static let banner = """
+    \u{1F1F5}\u{1F1F0} Shalimar
+    ©2019-26 G R Akhtar, Islamabad
+    All rights reserved
+
+
+    """
 
     private func clearConsole() {
         console.attributedText = NSAttributedString(string: "")
@@ -173,13 +188,32 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     private func append(_ text: String, _ style: ConsoleStyle) {
         let font = console.font ?? UIFont.monospacedSystemFont(ofSize: 12, weight: .regular)
-        let run = NSAttributedString(string: text,
-                                     attributes: [.foregroundColor: style.color, .font: font])
+        let run = NSMutableAttributedString(string: text,
+                                            attributes: [.foregroundColor: style.color, .font: font])
+        Self.enlargeCopyrightSign(in: run, over: font)
         let all = NSMutableAttributedString(attributedString: console.attributedText
                                             ?? NSAttributedString(string: ""))
         all.append(run)
         console.attributedText = all
         if style == .error, let line = Self.reportedLine(in: text) { errorLines.insert(line) }
+    }
+
+    // © is drawn inside the same advance as a letter, so its ring ends up around the size
+    // of an 'o' counter rather than of the capitals beside it, and at 12pt that reads as a
+    // speck. Four points bigger brings the ring up to the cap height of the line it sits
+    // in; the baseline offset puts back the drop that setting a taller font on one glyph
+    // would otherwise cause, so the text either side stays on its line.
+    private static func enlargeCopyrightSign(in run: NSMutableAttributedString, over font: UIFont) {
+        let text = run.string as NSString
+        let bigger = font.withSize(font.pointSize + 4)
+        var searched = NSRange(location: 0, length: text.length)
+        while true {
+            let found = text.range(of: "©", options: [], range: searched)
+            guard found.location != NSNotFound else { return }
+            run.addAttributes([.font: bigger, .baselineOffset: -1], range: found)
+            let next = NSMaxRange(found)
+            searched = NSRange(location: next, length: text.length - next)
+        }
     }
 
     // The four stages report errors in four different types - a String from the lexer, a
@@ -618,6 +652,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         guard let programSource = program.text else {return}
 
         clearConsole()
+        append(Self.banner, .system)
         // Every stage below can return early, and the strips have to be drawn whichever
         // one stopped the run - so this is deferred rather than repeated at four exits.
         defer { layoutErrorStrips() }
