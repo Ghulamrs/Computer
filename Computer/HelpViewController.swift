@@ -135,7 +135,38 @@ final class HelpViewController: UIViewController {
       k : 5           k is int
       y : 1.5         y is real
 
-    An array cannot. Declare it first.
+    An array can too, but only from a literal,
+    which carries its own shape:
+
+      X : {{0.,1.},{1.,2.}}   a 2x2 real
+
+    Any other right-hand side needs a
+    declaration first, because the size cannot
+    be known:
+
+      C : A     Declare the array 'C' first
+
+    OMITTED ENTRIES
+    ---------------
+    A slot left empty stands for zero. The
+    commas still fix the shape, so you only type
+    the values that matter:
+
+      M : {{1.0,,},{,1.0,},{,,1.0}}
+                      the 3x3 identity
+      K : {{,,},{,,},{1.,1.,1.}}
+                      only the last row set
+
+    A literal is the array's whole new value:
+    anything it does not reach becomes zero, not
+    what was there before.
+
+    A blank has no type of its own, so one entry
+    must carry it. All-blank works only where
+    the type is already known:
+
+      real Z[2][2] : {{,},{,}}    zeros
+      Z : {{,},{,}}               error
 
     ASSIGNMENT
     ----------

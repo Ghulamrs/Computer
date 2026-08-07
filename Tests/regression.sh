@@ -731,6 +731,52 @@ fill(A)
 t "scalar assignment unaffected" "6" 'fun <> = main() { x : 5
 x : x + 1
 ? x }'
+
+# ------------------------------------------------------- omitted entries in a literal
+# A slot left empty is an omitted entry, not a syntax error: the commas alone fix the
+# shape. It stands for the zero of the element type, which is the same thing a literal
+# that stops short of the extents leaves behind - absence means zero either way.
+t "elision writes zeros around it" "1.000000  0.000000  0.000000 0.000000  1.000000  0.000000 0.000000  0.000000  1.000000" 'fun <> = main() { M : {{1.0,,},{,1.0,},{,,1.0}}
+? M }'
+t "elided literal keeps its shape" "3 3" 'fun <> = main() { M : {{1.0,,},{,1.0,},{,,1.0}}
+? M.row M.col }'
+t "whole rows may be blank" "0.000000  0.000000  0.000000 0.000000  0.000000  0.000000 1.000000  1.000000  1.000000" 'fun <> = main() { K : {{,,},{,,},{1.,1.,1.}}
+? K }'
+t "an int literal elides to int 0" "1  0  0 0  1  0" 'fun <> = main() { N : {{1,,},{,1,}}
+? N }'
+# A blank carries no type, so a leading gap must not decide the literal is int.
+t "a leading blank does not set the type" "0.000000  1.500000  0.000000" 'fun <> = main() { R : {,1.5,}
+? R }'
+t "elision fills a declared array" "3 3" 'fun <> = main() { real M[3][3] : {{1.,,},{,1.,},{,,1.}}
+? M.row M.col }'
+# Blank all the way down has a shape but no type to read - fine once the array is
+# declared, since the declaration supplies the type, and an error when it is not.
+t "all-blank cannot create" "An all-blank literal cannot create 'Z'" 'fun <> = main() { Z : {{,,},{,,},{,,}}
+? Z }'
+t "all-blank is fine when declared" "0.000000  0.000000 0.000000  0.000000" 'fun <> = main() { real Z[2][2] : {{,},{,}}
+? Z }'
+# The other half of "absence means zero": a literal that stops short no longer leaves
+# the cells beyond it holding whatever was there before.
+t "a short literal zeroes the rest" "9.000000  9.000000  0.000000 9.000000  9.000000  0.000000 0.000000  0.000000  0.000000" 'fun <> = main() { real M[3][3] : {{5.,5.,5.},{5.,5.,5.},{5.,5.,5.}}
+M : {{9.,9.},{9.,9.}}
+? M }'
+# Clearing resets the contents, not the storage, so a by-reference fill still reaches
+# the caller and still does not resize it.
+t "elision through a reference param" "9.000000  0.000000  0.000000 0.000000  9.000000  0.000000" 'fun <> = fill(M[][]: real) {
+M : {{9.,,},{,9.,}}
+}
+fun <> = main() { real A[2][3]
+fill(A)
+? A }'
+# Row assignment is deliberately the exception: it replaces the row rather than filling
+# it, which is what keeps dimensions measured rather than declared.
+t "row assignment still replaces" "2" 'fun <> = main() { real A[2][5]
+A[0] : {1.,2.}
+? A[0].row }'
+# Consequence of slots being counted by commas: a trailing comma is now a blank slot
+# rather than a parse error. '{1.,2.,}' is three entries, the last one zero.
+t "a trailing comma is a slot" "3" 'fun <> = main() { v : {1.,2.,}
+? v.row }'
 t "string assignment unaffected" "hi" 'fun <> = main() { char s[8] : "abcdef"
 s : "hi"
 ? s }'

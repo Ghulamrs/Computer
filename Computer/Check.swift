@@ -305,6 +305,12 @@ final class Checker {
             if type.rank > 0 && type.scalar != .char && !(node.expr is ArrayLiteralNode) {
                 error("Declare the array '\(target.root)' first", node.line)
             }
+            // A literal normally carries its own type, but one that is blank all the way
+            // down carries only a shape - there is no entry to read a type from. The
+            // extents would be fine; it is the element type that cannot be settled.
+            if isAllBlank(node.expr) {
+                error("An all-blank literal cannot create '\(target.root)'", node.line)
+            }
             define(target.root, type)
             return AssignNode(target: node.target, op: node.op,
                               expr: coerce(node.expr, to: type, line: node.line), line: node.line)
@@ -559,7 +565,12 @@ final class Checker {
             return checkCall(node, line: line).type
 
         case let node as ArrayLiteralNode:
-            guard let first = node.elements.first else { return .array(.int) }
+            // The type comes from the first slot that actually holds something. A blank
+            // carries no type of its own - '{,1.0,}' is a real literal, not an int one -
+            // so skipping blanks here is what stops the leading gap deciding the type.
+            guard let first = node.elements.first(where: { !isAllBlank($0) }) else {
+                return .array(.int)
+            }
             return .array(infer(first, line: line))
 
         default:
@@ -568,6 +579,14 @@ final class Checker {
     }
 
     private func coerce(_ expr: ExprNode, to target: ShalimarType, line: Int) -> ExprNode {
+        // A brace literal always goes through pushDown, even when its inferred type already
+        // matches the target: pushDown is what fills each blank slot with the zero of the
+        // element type, and the rewrite() path below would leave blanks in the tree for the
+        // interpreter, which has no element type to resolve them against.
+        if case .array = target, expr is ArrayLiteralNode {
+            return pushDown(expr, to: target, line: line)
+        }
+
         let inferred = infer(expr, line: line)
         if inferred == target { return rewrite(expr, line: line) }
 
@@ -605,6 +624,12 @@ final class Checker {
             guard case .array(let element) = target else { break }
             return ArrayLiteralNode(elements: node.elements.map { pushDown($0, to: element, line: line) })
 
+        case is BlankNode:
+            // The one place a blank turns into a value. It becomes the zero of whichever
+            // scalar it landed on, so an omitted entry in a real matrix is 0. and in an int
+            // one is 0 - and no BlankNode survives past this point.
+            return zero(of: target)
+
         default:
             break
         }
@@ -612,6 +637,25 @@ final class Checker {
         let inferred = infer(expr, line: line)
         if inferred == target { return rewrite(expr, line: line) }
         return ConvertNode(expr: rewrite(expr, line: line), to: target)
+    }
+
+    /// The literal an omitted slot stands for, for each scalar type.
+    private func zero(of type: ShalimarType) -> ExprNode {
+        switch type {
+        case .real: return RealNode(value: 0)
+        case .char: return StringNode(value: "")
+        default:    return IntNode(value: 0)
+        }
+    }
+
+    /// True for a blank slot, and for a literal made only of blank slots - `{,,}` and
+    /// `{{,},{,}}` alike. Used to find the slot a literal's type can come from.
+    private func isAllBlank(_ expr: ExprNode) -> Bool {
+        if expr is BlankNode { return true }
+        if let literal = expr as? ArrayLiteralNode {
+            return !literal.elements.isEmpty && literal.elements.allSatisfy { isAllBlank($0) }
+        }
+        return false
     }
 
     private func rewrite(_ expr: ExprNode, line: Int) -> ExprNode {

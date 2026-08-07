@@ -250,7 +250,16 @@ class Parser {
             return ArrayLiteralNode(elements: elements)
         }
         while true {
-            elements.append(try parseInitializer())
+            // A slot with nothing in it is an omitted entry, not a syntax error: the commas
+            // alone still fix the shape, so '{1.0,,}' is three slots and '{,,}' is three
+            // empty ones. Checked here rather than in parseExpression because only a brace
+            // literal has slots for something to be missing from.
+            let kind = peekCurrentToken().kind
+            if kind == .Comma || kind == .BraceClose {
+                elements.append(BlankNode())
+            } else {
+                elements.append(try parseInitializer())
+            }
             if match(.Comma) { continue }
             break
         }

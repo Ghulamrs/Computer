@@ -408,6 +408,20 @@ final class Interpreter {
         return value
     }
 
+    /// Resets every element to the zero of its own type, in place and at any rank, keeping
+    /// the array's storage and extents. Each element keeps its type because the extents are
+    /// fixed at declaration and so is the element type - clearing is not retyping.
+    private func clear(_ ref: ArrayRef) {
+        for i in ref.elements.indices {
+            switch ref.elements[i] {
+            case .array(let inner): clear(inner)
+            case .int:  ref.elements[i] = .int(0)
+            case .real: ref.elements[i] = .real(0)
+            case .char: ref.elements[i] = .char(0)
+            }
+        }
+    }
+
     private func fit(_ source: Value, into target: Value, line: Int) throws -> Value {
         guard case .array(let targetRef) = target else { return source }
         guard case .array(let sourceRef) = source else { return target }
@@ -443,11 +457,13 @@ final class Interpreter {
             // Extents are fixed at declaration, and an array may be shared by reference
             // with a caller - swapping the storage out would resize it under them.
             if case .array(let existing) = box.value, case .array = value {
-                if existing.elements.first.map({
-                    if case .char = $0 { return true } else { return false }
-                }) ?? false {
-                    for i in existing.elements.indices { existing.elements[i] = .char(0) }
-                }
+                // Clear first, so the literal is the array's whole new value rather than a
+                // patch over the old one. Absence then means the same thing however it
+                // arises - a gap inside the literal, or a literal that stops short of the
+                // extents - instead of a gap writing 0 while a short literal left 5 behind.
+                // Only the contents are reset; the storage itself is kept, which is what
+                // still lets a by-reference parameter be filled without resizing it.
+                clear(existing)
                 _ = try fit(value, into: box.value, line: line)
                 return
             }

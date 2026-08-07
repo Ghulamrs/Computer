@@ -252,7 +252,8 @@ Program        ::= { Declaration | FunctionDef }
 Declaration    ::= Type Identifier { "[" Expression "]" } [ ":" Initializer ]
 Type           ::= "int" | "real" | "char"
 Initializer    ::= ArrayLiteral | Expression
-ArrayLiteral   ::= "{" [ Initializer { "," Initializer } ] "}"
+ArrayLiteral   ::= "{" [ Slot { "," Slot } ] "}"
+Slot           ::= Initializer | (* empty - an omitted entry, see 7.1.1 *)
 
 FunctionDef    ::= "fun" OutputList "=" Identifier "(" [ ParamList ] ")" Block
 OutputList     ::= "<" [ Type { "," Type } ] ">"
@@ -470,8 +471,48 @@ fun <> = fill(M[][]: real) {
 }
 ```
 
+**The literal becomes the array's whole new value: every cell the literal does not reach is set to
+zero**, not left holding what was there before.
+
+```
+real M[3][3] : {{5.,5.,5.},{5.,5.,5.},{5.,5.,5.}}
+M : {{9.,9.},{9.,9.}}         // 9 9 0 / 9 9 0 / 0 0 0, not 9 9 5 / 9 9 5 / 5 5 5
+```
+
+Only the *contents* are reset — the storage and extents are untouched, which is what keeps the
+by-reference fill above working. Clearing is not rebinding.
+
 *Element* assignment is different and deliberately so: `A[0] : {1.,2.}` **replaces** the row. That is
 what makes an array's dimensions measured rather than declared ([§9](#9-arrays)).
+
+### 7.1.1 Omitted entries
+
+A slot left empty inside a literal is an **omitted entry**, and stands for the zero of the element
+type. The commas alone fix the shape, so nothing is lost by leaving a value out:
+
+```
+M : {{1.0,,},{,1.0,},{,,1.0}}    // the 3x3 identity
+K : {{,,},{,,},{1.,1.,1.}}       // only the last row set, the rest zero
+```
+
+This is what makes a sparse matrix writable in one line on a phone keyboard, without spelling out
+every `0.` — the motivating case being the rotation matrices in `Examples/rotations.shm`, where the
+zeros outnumber the values and sit in a different place in each of ROX/ROY/ROZ.
+
+Three consequences worth being explicit about:
+
+- **Absence means zero however it arises.** A gap inside the literal and a literal that stops short
+  of the extents do the same thing. That is the point of the zero-fill rule above: without it,
+  `{{9.,9.},{9.,9.}}` and `{{9.,9.,},{9.,9.,},{,,}}` would differ on an array that already held
+  data, and nothing on the page would say which you had written.
+- **A blank carries no type.** The element type is read from the first slot that holds something, so
+  a leading gap does not make `{,1.5,}` an int literal. A literal that is blank all the way down has
+  a shape but no type, so it cannot *create* an array — `Z : {{,,},{,,}}` is
+  `An all-blank literal cannot create 'Z'`. It is perfectly legal once the array is declared, where
+  the declaration supplies the type: `real Z[2][2] : {{,},{,}}` is a 2x2 of zeros.
+- **A trailing comma is now a slot, not an error.** `{1.,2.,}` is three entries, the last one zero.
+  This follows from counting slots by commas and cannot be special-cased away without also breaking
+  `{1.0,,}`, which needs its trailing gap to mean a third entry.
 
 ### 7.2 Compound assignment
 
@@ -951,7 +992,10 @@ it finds, then refuses to run if any of them is an error. This is why several di
 at once, and why warnings appear for programs that still run.
 
 Errors here cover undefined names, type mismatches, arity, array extents that can be folded, reserved
-names, and returns that do not match the output list.
+names, returns that do not match the output list, and the two ways an array cannot be created by
+assignment — `Declare the array 'C' first` for a non-literal right-hand side, and
+`An all-blank literal cannot create 'Z'` for a literal with no entry to take a type from
+([§7.1.1](#711-omitted-entries)).
 
 The two warnings:
 

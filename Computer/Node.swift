@@ -125,6 +125,13 @@ public struct ArrayLiteralNode: ExprNode {
     }
 }
 
+/// An omitted slot in an array literal: the gap in `{1.0,,}`. It holds the place so the
+/// commas still describe the shape, and the checker replaces it with the zero of the
+/// element type - so nothing downstream of Check ever sees one.
+public struct BlankNode: ExprNode {
+    public var description: String { "BlankNode" }
+}
+
 public struct VariableNode: ExprNode {
     public let name: String
     public var description: String { "VariableNode(\(name))" }
