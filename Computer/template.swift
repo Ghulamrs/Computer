@@ -73,6 +73,45 @@ fun <> = main() {
   ? a + " and " + b
   ? prec(15) "pi is" pi
 }
+// split - the pieces are passed in and filled, since an array cannot be returned
+fun <int> = split(s[]: char, a[]: char, b[]: char) {
+  at : -1
+  // No break, so the whole string is scanned and the guard keeps the first space.
+  for i < s.row {
+    if at < 0 {
+      if s[i] = char(32) { at : i }
+    }
+  }
+  if at < 0 { return -1 }
+
+  // The a.row-1 / b.row-1 guards are not optional: without them a piece too big for
+  // its destination is clipped silently, and char(32) is the space - there is no
+  // character literal.
+  for i < at {
+    if i < a.row-1 { a[i] : s[i] }
+  }
+  a[at] : char(0)
+
+  j : 0
+  for i : at+1 to s.row-1 {
+    if j < b.row-1 {
+      b[j] : s[i]
+      j : j + 1
+    }
+  }
+  b[j] : char(0)
+  return at
+}
+fun <> = main() {
+  char text[32] : "hello world"
+  char left[32]
+  char right[32]
+
+  n : split(text, left, right)
+  ? "at" n
+  ? left
+  ? right
+}
 // quadratic
 fun <> = main() {
   a : 1.
