@@ -2,7 +2,7 @@
 //  scanlayout.swift
 //  Shalimar scan-layout tests
 //
-//  Exercises Computer/ScanLayout.swift, which rebuilds source lines from OCR bounding boxes.
+//  Exercises Shalimar/ScanLayout.swift, which rebuilds source lines from OCR bounding boxes.
 //  ScanLayout deliberately avoids UIKit and Vision so this can run as a plain command-line binary,
 //  the same way the language core does - Tests/regression.sh compiles and runs both.
 //

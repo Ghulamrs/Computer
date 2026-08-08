@@ -2,7 +2,7 @@
 
 A developer reference for **Shalimar**, the small numeric language interpreted by
 `TokenKind.swift` / `Node.swift` / `Parse.swift` / `Check.swift` / `Interpreter.swift` in this
-project (Xcode project `Computer`, target `Computer`). This document is the authoritative
+project (Xcode project `Shalimar`, target `Shalimar`). This document is the authoritative
 specification: when the interpreter and this document disagree, that is a conformance bug in the
 interpreter, not a documentation error — fix the code, or deliberately renegotiate and update this
 file, but don't let them silently drift.

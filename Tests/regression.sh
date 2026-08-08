@@ -27,7 +27,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SRC="$ROOT/Computer"
+SRC="$ROOT/Shalimar"
 BUILD="$(mktemp -d)"
 trap 'rm -rf "$BUILD"' EXIT
 

@@ -1,6 +1,6 @@
 //
 //  ViewController.swift
-//  Computer: G. R. Akhtar
+//  Shalimar: G. R. Akhtar
 //
 //  Created by Home on 5/21/19.
 //  Updated by Hone on 9/9/19
@@ -55,17 +55,30 @@ class FirstViewController: UITableViewController, Storyboarded {
     
     override func viewDidAppear(_ animated: Bool) {
         option.removeAll()
-        
-        option.append("Compute")
+
         let list:[URL] = FileManager.default.urls(for: .documentDirectory)!
-        if  list.isEmpty { option.append("primes") }
         for index in list.indices {
             let name = list[index].lastPathComponent
             if(!option.contains(name)) {
                 option.append(name)
             }
         }
+        tableView.backgroundView = option.isEmpty ? emptyStateView() : nil
         tableView.reloadData()
+    }
+
+    // Every row is a program the user saved, so before they have saved one there is
+    // nothing here at all - and a blank white screen under a title reads as a screen that
+    // failed to load rather than one that is waiting. The label says where the programs
+    // will come from and points at the one control on the screen that makes one.
+    private func emptyStateView() -> UIView {
+        let label = UILabel()
+        label.text = "No programs yet.\n\nTap + to write one."
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.textColor = UIColor.secondaryLabel
+        label.font = UIFont.systemFont(ofSize: 17)
+        return label
     }
 
     override func numberOfSections(in tableView: UITableView) -> Int {
@@ -86,17 +99,11 @@ class FirstViewController: UITableViewController, Storyboarded {
     }
     
     override func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
-        switch indexPath.row {
-        case 0:
-            coordinator?.calculate()
-        default:
-            coordinator?.fileURL = option[indexPath.row]
-            coordinator?.compute()
-        }
+        coordinator?.fileURL = option[indexPath.row]
+        coordinator?.compute()
     }
 
     override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
-        if indexPath.row==0 { return nil }
         let delete = deleteAction(at: indexPath)
         return UISwipeActionsConfiguration(actions: [delete])
     }
@@ -108,6 +115,9 @@ class FirstViewController: UITableViewController, Storyboarded {
             if  self.deleteItem(urlName: self.option[indexPath.row]) {
                 self.option.remove(at: indexPath.row)
                 self.tableView.deleteRows(at: [indexPath], with: .automatic)
+                // Deleting the last program empties the list without leaving the screen,
+                // so the empty state has to be put up here too and not only on appearing.
+                self.tableView.backgroundView = self.option.isEmpty ? self.emptyStateView() : nil
             }
             completion(true)
         }

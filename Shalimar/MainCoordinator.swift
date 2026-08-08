@@ -1,6 +1,6 @@
 //
 //  MainCoordinator.swift
-//  Computer
+//  Shalimar
 //
 //  Created by Home on 5/21/19.
 //  Copyright © 2019-2026 G. R. Akhtar. All rights reserved.
@@ -21,12 +21,6 @@ class MainCoordinator: Coordinator {
     
     func start() {
         let vc = FirstViewController.instantiate()
-        vc.coordinator = self
-        navigationController.pushViewController(vc, animated: true)
-    }
-    
-    func calculate() {
-        let vc = CalculateViewController.instantiate()
         vc.coordinator = self
         navigationController.pushViewController(vc, animated: true)
     }

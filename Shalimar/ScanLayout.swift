@@ -1,6 +1,6 @@
 //
 //  ScanLayout.swift
-//  Computer
+//  Shalimar
 //
 //  Rebuilding source lines from OCR text observations.
 //

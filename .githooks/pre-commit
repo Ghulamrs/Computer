@@ -16,7 +16,7 @@ set -uo pipefail
 # The suite costs a swiftc compile, so only pay it when something it actually
 # covers is being committed. Docs- or storyboard-only commits skip straight past.
 if ! git diff --cached --name-only --diff-filter=ACMR |
-     grep -qE '^(Computer/(Lexer|Parser|Interpreter)\.swift|Tests/)'; then
+     grep -qE '^(Shalimar/(Lexer|Parser|Interpreter)\.swift|Tests/)'; then
     exit 0
 fi
 

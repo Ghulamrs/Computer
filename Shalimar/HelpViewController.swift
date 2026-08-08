@@ -1,6 +1,6 @@
 //
 //  HelpViewController.swift
-//  Computer: G. R. Akhtar
+//  Shalimar: G. R. Akhtar
 //
 //  The language reference, reachable from the "?" in the editor's nav bar.
 //
