@@ -28,6 +28,20 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     override func viewDidLoad() {
         super.viewDidLoad()
+
+        // The editor is a TextKit 1 text view, and it has to be one from the start.
+        //
+        // A UITextView built by a storyboard begins on TextKit 2, and reaching for
+        // textStorage or layoutManager - which the syntax colouring, the line-number
+        // gutter and the error strips all do - converts it down to TextKit 1 on the spot.
+        // Converting is not the same as starting there: the selection machinery is set up
+        // before the switch and does not follow it, so a selection kept its grab handles
+        // but lost the highlight band that says how far it reaches. Copy and paste both
+        // worked, which is what made it look like a drawing bug rather than a text engine
+        // one. Asking for the layout manager here, before the view is laid out and before
+        // any selection exists, settles the engine first and everything else follows it.
+        _ = program.layoutManager
+
         // SF Mono, which has no name to pass to UIFont(name:) on iOS - the system API is
         // the only way to reach it. Set before lineview copies it below so the gutter and
         // the editor keep the same line height and the numbers stay on their lines.
@@ -467,7 +481,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // capital one is an identifier when the language disagrees.
     static let keywords: Set<String> = [
         "if", "elseif", "else", "while", "for", "to", "step", "fun", "return",
-        "int", "real", "char"
+        "break", "continue", "int", "real", "char"
     ]
 
     // The colouring has to agree with the lexer about what a word is, or it teaches the
@@ -502,16 +516,20 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                                      range: NSRange(location: start, length: i - start))
                 continue
             }
-            // A quote opens a string that runs to the next quote, newlines included.
-            // Quotes and all: the delimiters are part of the literal, and colouring the
-            // body alone would leave them looking like stray operators.
+            // A quote opens a string that runs to the next quote on the same line, which
+            // is exactly as far as the lexer will take it. Quotes and all: the delimiters
+            // are part of the literal, and colouring the body alone would leave them
+            // looking like stray operators.
             if c == 0x22 {
                 let start = i
                 i += 1
-                while i < source.length, source.character(at: i) != 0x22 { i += 1 }
+                while i < source.length,
+                      source.character(at: i) != 0x22,
+                      source.character(at: i) != 0x0A { i += 1 }
                 i += 1
-                // An unterminated string runs off the end, so the span has to be clipped
-                // back to the text - the lexer's pattern closes the quote optionally too.
+                // A quote the user has opened and not yet closed colours to the end of its
+                // line and no further. Stopping at the newline is what keeps a half-typed
+                // literal from painting the rest of the program pink until it is finished.
                 let end = min(i, source.length)
                 storage.addAttribute(.foregroundColor, value: Self.stringColour,
                                      range: NSRange(location: start, length: end - start))
@@ -605,7 +623,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     // Braces opened and closed on one line, ignoring any that are not structure: a brace
     // inside a string or after // is text. No escape handling, because the lexer has no
-    // escapes - its string pattern is "[^"]*", so the first quote always closes.
+    // escapes - its pattern is "[^"\n]*", so the first quote on the line closes.
     // leadingCloses counts only the braces before anything else on the line; those are
     // what pull the line itself back out a level.
     private static func braceCounts(in line: String) -> (opens: Int, closes: Int, leadingCloses: Int) {
@@ -1016,13 +1034,19 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     @objc func saveTapped() {
         guard let coordinator = coordinator else { return }
-        if coordinator.fileURL.isEmpty {
+        // An example lives in the app bundle, which is not writable - and must not be, or
+        // the baseline the examples exist to hold could be edited away one save at a time.
+        // So saving one asks for a name and writes a copy into the user's own programs,
+        // exactly as a program typed from scratch does; the example itself is untouched
+        // and the editor is now working on the copy.
+        if coordinator.fileURL.isEmpty || coordinator.fileIsExample {
             promptForFileName { [weak self] name in
                 guard let self = self, let name = name else { return }
                 let fileName = Self.named(name)
                 // Before the write, so the name is in the file and not only in the editor.
                 self.writeNameHeader(fileName)
                 self.coordinator?.fileURL = fileName
+                self.coordinator?.fileIsExample = false
                 self.save(fileName: fileName)
             }
         } else {
@@ -1134,8 +1158,14 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     func load(fileName: String) {
         do {
-            let docDirURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
-            let fileURL = docDirURL.appendingPathComponent(fileName) //.appendingPathExtension("sha")
+            let fileURL: URL
+            if coordinator?.fileIsExample == true {
+                guard let bundled = BundledExamples.url(for: fileName) else { return }
+                fileURL = bundled
+            } else {
+                let docDirURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+                fileURL = docDirURL.appendingPathComponent(fileName)
+            }
             program.text = Self.reindented(try String(contentsOf: fileURL))
             programChanged()
         } catch let error as NSError {
