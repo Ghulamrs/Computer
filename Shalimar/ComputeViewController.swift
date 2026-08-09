@@ -113,6 +113,8 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         console.isScrollEnabled = true
         console.isEditable = false
 
+        installConsoleHandle()
+
         // The storyboard leaves 20pt between the console and the safe area, which was
         // nothing but white. A line fits there exactly, and it is the one place in the
         // editor that can say what the app is without taking room from the program or the
@@ -314,6 +316,131 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
 
     """
+
+    // The console is a third of the page and most of a session does not need it. It has
+    // nothing to say until a run, and once the output has been read it is a third of the
+    // editor spent on text already looked at. The bar between the two panes hands that
+    // third back: one tap and the editor grows into the whole page, another and the console
+    // returns to the share the storyboard gave it.
+    //
+    // Not a gesture on the console itself. That view already answers a single tap by
+    // copying a word into the editor and a double tap by filling an empty one, and a third
+    // meaning on the same surface would leave all three guessing. The bar is its own
+    // control and this is the only thing it does.
+    private let consoleHandle = ConsoleHandle()
+    // The storyboard's 2:1 split, and the constraint that overrules it when the pane is
+    // shut. Exactly one is ever active.
+    private var consoleShare: NSLayoutConstraint?
+    private var consoleCollapsed: NSLayoutConstraint?
+    private var isConsoleHidden = false
+
+    private func installConsoleHandle() {
+        // The storyboard puts 8pt of nothing between the editor and the console. The bar
+        // takes that gap over and 16pt besides, which is the whole cost of this in editor
+        // height - about one line - against the third that one tap on it returns.
+        view.constraints.first { $0.identifier == "consoleGap" }?.isActive = false
+        consoleShare = view.constraints.first { $0.identifier == "consoleShare" }
+
+        consoleHandle.translatesAutoresizingMaskIntoConstraints = false
+        consoleHandle.isAccessibilityElement = true
+        consoleHandle.accessibilityTraits = .button
+        consoleHandle.accessibilityLabel = "Console"
+
+        // The grabber a sheet uses, at the size a sheet uses it: this is a pane that pulls
+        // shut, and anyone who has closed a sheet already knows what the pill means without
+        // being told. In the gutter's grey, so it reads as furniture beside the code rather
+        // than as a fourth signal next to output, warning and error.
+        let grip = UIView()
+        grip.translatesAutoresizingMaskIntoConstraints = false
+        grip.backgroundColor = UIColor(white: 0.6, alpha: 1)
+        grip.layer.cornerRadius = 2.5
+        consoleHandle.addSubview(grip)
+
+        view.addSubview(consoleHandle)
+        NSLayoutConstraint.activate([
+            consoleHandle.topAnchor.constraint(equalTo: program.bottomAnchor),
+            consoleHandle.bottomAnchor.constraint(equalTo: console.topAnchor),
+            consoleHandle.heightAnchor.constraint(equalToConstant: 24),
+            // The console's own margins, not the editor's: the bar belongs to the pane it
+            // closes, and lining it up with the wider editor would read as a rule across
+            // the page.
+            consoleHandle.leadingAnchor.constraint(equalTo: console.leadingAnchor),
+            consoleHandle.trailingAnchor.constraint(equalTo: console.trailingAnchor),
+            grip.centerXAnchor.constraint(equalTo: consoleHandle.centerXAnchor),
+            grip.centerYAnchor.constraint(equalTo: consoleHandle.centerYAnchor),
+            grip.widthAnchor.constraint(equalToConstant: 40),
+            grip.heightAnchor.constraint(equalToConstant: 5)
+        ])
+
+        // Built once and left inactive, so a tap flips two flags rather than making a
+        // constraint and throwing it away again.
+        consoleCollapsed = console.heightAnchor.constraint(equalToConstant: 0)
+
+        consoleHandle.addGestureRecognizer(UITapGestureRecognizer(target: self,
+                                                                  action: #selector(consoleHandleTapped)))
+        describeConsoleHandle()
+    }
+
+    @objc private func consoleHandleTapped() {
+        setConsoleHidden(!isConsoleHidden, animated: true)
+    }
+
+    // Deactivate before activating, both ways round. For any moment where both are on, the
+    // two constraints disagree about the console's height, and Auto Layout settles that by
+    // breaking one of them - a wall of console text in the log, and not our choice of which.
+    private func setConsoleHidden(_ hidden: Bool, animated: Bool) {
+        guard hidden != isConsoleHidden else { return }
+        isConsoleHidden = hidden
+        if hidden {
+            consoleShare?.isActive = false
+            consoleCollapsed?.isActive = true
+        } else {
+            consoleCollapsed?.isActive = false
+            consoleShare?.isActive = true
+        }
+        describeConsoleHandle()
+
+        // Resizing a UITextView scrolls it to wherever its selection is, and after a file
+        // is loaded that selection sits at the end of the program - so the first tap threw
+        // a reader who was at line 1 down to line 54. Taking the room back is meant to show
+        // more of the same page, not a different one. Read the offset before the pane moves
+        // and put it back after.
+        let reading = program.contentOffset
+
+        // The editor is what moves, and it should look pushed rather than cut: a spring
+        // damped just short of a bounce, over about the length of a sheet dismissal. The
+        // layout pass has to happen inside the block - that is what gives the constraint
+        // change something to travel over, and without it the panes jump.
+        guard animated else {
+            view.layoutIfNeeded()
+            keepEditorAt(reading)
+            return
+        }
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.85,
+                       initialSpringVelocity: 0, options: [.curveEaseInOut]) {
+            self.view.layoutIfNeeded()
+            self.keepEditorAt(reading)
+        }
+    }
+
+    // Only after the layout pass, so the bounds and the wrapping are the new ones. Clamped
+    // rather than assigned: showing the console shortens the editor, and the offset that
+    // was legal in a taller frame can be past the end of a shorter one - which would leave
+    // it parked below the last line with nothing to look at.
+    private func keepEditorAt(_ offset: CGPoint) {
+        let inset = program.adjustedContentInset
+        let lowest = max(-inset.top,
+                         program.contentSize.height + inset.bottom - program.bounds.height)
+        program.contentOffset = CGPoint(x: offset.x, y: min(offset.y, lowest))
+    }
+
+    // VoiceOver cannot see that the pane went away, so the bar has to say which of the two
+    // things it is about to do.
+    private func describeConsoleHandle() {
+        consoleHandle.accessibilityValue = isConsoleHidden ? "Hidden" : "Shown"
+        consoleHandle.accessibilityHint = isConsoleHidden ? "Shows the output pane"
+                                                          : "Hides the output pane"
+    }
 
     private func clearConsole() {
         console.attributedText = NSAttributedString(string: "")
@@ -795,6 +922,13 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
         guard let programSource = program.text else {return}
 
+        // A run whose output has nowhere to land is a run nobody can read, and the errors
+        // would be worse than the output: a program that failed to parse would show as
+        // yellow strips in the editor and no word anywhere about what was wrong with them.
+        // Starting a program is a request to see what it does, so the pane comes back on
+        // its own - the tap that shut it did not mean "and keep it shut through a run".
+        setConsoleHidden(false, animated: true)
+
         clearConsole()
         append(Self.banner, .system)
         // Every stage below can return early, and the strips have to be drawn whichever
@@ -1171,5 +1305,17 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         } catch let error as NSError {
             print(error)
         }
+    }
+}
+
+// The bar draws 24pt and a finger wants 44, so it answers for 10pt above and below itself
+// as well. Almost all of that is margin the text views were not using: each carries an 8pt
+// container inset at the edge it meets here, which leaves 2pt of live text claimed on
+// either side. Overriding this rather than growing the view is what keeps the extra reach
+// out of the layout - a taller bar would take the same space from the editor whether a
+// finger ever arrived there or not.
+private final class ConsoleHandle: UIView {
+    override func point(inside point: CGPoint, with event: UIEvent?) -> Bool {
+        bounds.insetBy(dx: 0, dy: -10).contains(point)
     }
 }
