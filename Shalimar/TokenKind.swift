@@ -17,6 +17,7 @@ enum TokenKind: Equatable {
     case Comma, Dot
 
     case If, ElseIf, Else, While, For, To, Step, Fun, Return
+    case Break, Continue
     case Int, Real, Char
 
     case EndOfInput
@@ -31,6 +32,7 @@ enum LexIssue: Error {
     case malformedNumber(String)
     case integerOutOfRange(String)
     case bangIsNotACommand
+    case unclosedString
 }
 
 typealias TokenGenerator = (String) throws -> TokenKind?
@@ -39,11 +41,20 @@ let tokenList: [(String, TokenGenerator)] = [
     ("//[^\n]*", { _ in nil }),
     ("[ \t\r\n]+", { _ in nil }),
 
-    ("\"[^\"]*\"?", { raw in
-        var body = raw.dropFirst()
-        if body.hasSuffix("\"") { body = body.dropLast() }
-        return .StringLiteral(String(body))
+    // A literal is closed by a quote on its own line. Both halves of that matter:
+    //
+    // The closing quote used to be optional, so a stray one swallowed everything after
+    // it and surfaced as a parse error far below, pointing at a line that was fine.
+    //
+    // Excluding the newline is what puts the error on the line the quote is actually
+    // on. With [^"]* the opening quote simply reached forward to the next quote in the
+    // file - one line down, or twenty - and the text between them, program and all,
+    // became the string. A literal that spans lines has no use here anyway: there are
+    // no escapes, and layout already carries meaning for the print rule.
+    ("\"[^\"\n]*\"", { raw in
+        return .StringLiteral(String(raw.dropFirst().dropLast()))
     }),
+    ("\"", { _ in throw LexIssue.unclosedString }),
 
     ("[a-zA-Z_][a-zA-Z0-9_]*", { raw in
         switch raw.lowercased() {
@@ -56,6 +67,8 @@ let tokenList: [(String, TokenGenerator)] = [
         case "step":   return .Step
         case "fun":    return .Fun
         case "return": return .Return
+        case "break":    return .Break
+        case "continue": return .Continue
         case "int":    return .Int
         case "real":   return .Real
         case "char":   return .Char
@@ -160,6 +173,9 @@ class Lexer {
                     return tokens
                 } catch LexIssue.integerOutOfRange(let run) {
                     lexError = message("'\(run)' is too big for int - add '.'")
+                    return tokens
+                } catch LexIssue.unclosedString {
+                    lexError = message("Unclosed string - add '\"'")
                     return tokens
                 } catch {
                     lexError = message("'!' is not a command - use '??' or '!='")

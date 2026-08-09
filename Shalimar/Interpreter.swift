@@ -158,9 +158,15 @@ final class Interpreter {
 
     private static let constants: [String: Value] = ["pi": .real(Double.pi), "e": .real(M_E)]
 
+    // How a statement finished. Anything but .normal stops the enclosing statement
+    // list and travels outward until something claims it: a loop claims .broke and
+    // .continued, a call claims .returned. The parser refuses 'break'/'continue'
+    // outside a loop, so neither can reach a call boundary unclaimed.
     private enum Flow {
         case normal
         case returned([Value])
+        case broke
+        case continued
     }
 
     func run(_ program: [Node]) {
@@ -243,9 +249,9 @@ final class Interpreter {
 
     private func execute(_ statements: [StmtNode]) throws -> Flow {
         for statement in statements {
-            if case .returned(let values) = try execute(statement) {
-                return .returned(values)
-            }
+            let flow = try execute(statement)
+            if case .normal = flow { continue }
+            return flow
         }
         return .normal
     }
@@ -274,6 +280,12 @@ final class Interpreter {
 
         case let node as ReturnNode:
             return .returned(try node.exprs.map { try evaluate($0) })
+
+        case is BreakNode:
+            return .broke
+
+        case is ContinueNode:
+            return .continued
 
         case let node as PrintNode:
             var text = ""
@@ -311,8 +323,10 @@ final class Interpreter {
 
         case let node as WhileNode:
             while try evaluate(node.condition).isTruthy {
-                if case .returned(let values) = try inScope({ try execute(node.body) }) {
-                    return .returned(values)
+                switch try inScope({ try execute(node.body) }) {
+                case .returned(let values): return .returned(values)
+                case .broke:                return .normal
+                case .continued, .normal:   break
                 }
             }
 
@@ -357,7 +371,13 @@ final class Interpreter {
                 let value = startValue + n * stepValue
                 if stepValue > 0 ? value > endValue : value < endValue { break }
                 counter.value = .real(value)
-                if case .returned(let values) = try execute(node.body) { return .returned(values) }
+                switch try execute(node.body) {
+                case .returned(let values): return .returned(values)
+                case .broke:                return .normal
+                // The step belongs to the loop, not the body, so 'continue' still
+                // advances the counter - it skips the rest of this pass, not the pass.
+                case .continued, .normal:   break
+                }
                 n += 1
             }
             return .normal
@@ -374,7 +394,11 @@ final class Interpreter {
         var i = startValue
         while stepValue > 0 ? i <= endValue : i >= endValue {
             counter.value = .int(i)
-            if case .returned(let values) = try execute(node.body) { return .returned(values) }
+            switch try execute(node.body) {
+            case .returned(let values): return .returned(values)
+            case .broke:                return .normal
+            case .continued, .normal:   break
+            }
             let (next, overflow) = i.addingReportingOverflow(stepValue)
             if overflow { break }
             i = next

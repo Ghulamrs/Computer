@@ -227,6 +227,39 @@ final class Checker {
                alwaysReturns(elseBody) {
                 return true
             }
+            // A loop whose condition cannot go false has no way out except a return
+            // or a break, so if its body always returns and no break escapes to it,
+            // the function cannot finish without returning. Without this, the
+            // 'while 1 { ... return x }' idiom - which 'break' makes ordinary - was
+            // reported as a function that can finish without a return.
+            if let whileNode = statement as? WhileNode,
+               isAlwaysTrue(whileNode.condition),
+               alwaysReturns(whileNode.body),
+               !escapesWithBreak(whileNode.body) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /// A condition the checker can see is never zero. Only a literal - anything
+    /// needing evaluation is left to run, since guessing wrong here would reject a
+    /// valid program.
+    private func isAlwaysTrue(_ condition: ExprNode) -> Bool {
+        if let int = condition as? IntNode { return int.value != 0 }
+        if let real = condition as? RealNode { return real.value != 0 }
+        return false
+    }
+
+    /// True when a `break` in this body would leave *this* loop. A nested loop owns
+    /// its own breaks, so the walk stops at one rather than counting it here.
+    private func escapesWithBreak(_ body: [StmtNode]) -> Bool {
+        for statement in body {
+            if statement is BreakNode { return true }
+            if let ifNode = statement as? IfNode {
+                if ifNode.branches.contains(where: { escapesWithBreak($0.body) }) { return true }
+                if let elseBody = ifNode.elseBody, escapesWithBreak(elseBody) { return true }
+            }
         }
         return false
     }
@@ -560,6 +593,25 @@ final class Checker {
                 error("'\(node.op.rawValue)' needs scalars, got \(lhs) and \(rhs)", line)
                 return .int
             }
+
+            // A char never joins arithmetic. Mixing one with a number was already
+            // refused, because widest() picks the char and the int will not convert
+            // into it - but char-with-char slipped through that, since widest() of two
+            // equal types is the type itself and nothing was left to disagree about.
+            // So 's[0] + s[1]' came back a real, which is the wall in reverse: the
+            // point of it is that '? c' prints a letter and not a number.
+            // Comparison and ordering stay legal, and '&' and '|' read truthiness,
+            // which every scalar has.
+            switch node.op {
+            case .add, .subtract, .multiply, .divide, .modulus, .power:
+                if lhs == .char || rhs == .char {
+                    error("'\(node.op.rawValue)' does not apply to char", line)
+                    return .int
+                }
+            default:
+                break
+            }
+
             switch node.op {
             case .equal, .notEqual, .less, .greater, .and, .or: return .int
             default: return widest(lhs, rhs)

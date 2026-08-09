@@ -30,7 +30,8 @@ both files change.
 - Four types: `int`, `real`, `char`, and arrays of them. Text is `char[]`. See [§5](#5-types).
 - Variables are declared with a type. A *scalar* may also be created by assigning to it; an array
   may not, unless the right-hand side is a literal ([§7.1](#71-assignment)).
-- Control flow: `if`/`elseif`/`else`, `while`, and two `for` forms.
+- Control flow: `if`/`elseif`/`else`, `while`, two `for` forms, and `break`/`continue`
+  inside a loop.
 - Functions may return **several** values; the caller captures them with `<a,b> : f(...)`. An array
   cannot be returned — it is passed in and filled, because an array argument is a reference
   ([§8.2](#82-arguments)).
@@ -119,7 +120,7 @@ Case-sensitive. Keywords are recognized case-insensitively at the lexer level (t
 `lowercased()` before the switch) and can never be used as identifiers:
 
 ```
-if  elseif  else  while  for  to  step  fun  return  int  real  char
+if  elseif  else  while  for  to  step  fun  return  break  continue  int  real  char
 ```
 
 `int`, `real` and `char` are keywords but are also the names of the three conversions, which is
@@ -186,13 +187,20 @@ else. `Double` is what actually arbitrates; the grammar above is the intent.
 ### 2.4 String literals
 
 ```
-StringLiteral ::= '"' { Character } '"'
+StringLiteral ::= '"' { Character except '"' or newline } '"'
 ```
 
 A string literal is a `char[]` holding the text plus a terminating `char(0)`. There are no escapes —
-the lexer's pattern is `"[^"]*"`, so the first closing quote always ends it, and a literal cannot
+the lexer's pattern is `"[^"\n]*"`, so the first closing quote always ends it, and a literal cannot
 contain a `"`. Non-ASCII *inside* a literal is allowed: the ASCII rule of [§2.2](#22-identifiers)
 governs identifiers, not text.
+
+**A literal must be closed on the line it opens**, or it is `Unclosed string - add '"'`
+([§13.1](#131-lex-errors)), reported on that line. Both halves of that pattern earn their place, and
+both were once missing: with the closing quote optional a single stray quote swallowed the rest of
+the file, and with the body able to match a newline the opening quote reached forward to the next
+quote anywhere below it - turning a program into a string and reporting the failure on a line that
+was not wrong.
 
 ### 2.5 Operators and punctuation
 
@@ -274,6 +282,8 @@ Statement      ::= Declaration            (* only at the top level of a function
                  | WhileStmt
                  | ForStmt
                  | PrintStmt
+                 | "break"                (* only inside a loop *)
+                 | "continue"             (* only inside a loop *)
 
 LValue         ::= Identifier { "[" Expression "]" }
 Assignment     ::= LValue (":" | "=") Initializer
@@ -462,6 +472,18 @@ B : {{1.,2.,3.},{4.,5.,6.}}   // creates a 2x3 real array
 C : A                          // Error - "Declare the array 'C' first"
 ```
 
+**`char[]` is the exception**, and deliberately so: a string carries its own length wherever it
+comes from, so there is nothing to infer in any of these cases.
+
+```
+s : "hello"        // creates a char[6]
+t : s              // creates a copy of s
+u : s + " there"   // sized to the result
+```
+
+Without this the `+` of [§10](#10-strings) would be close to unusable - every joined string would
+need a declaration carrying a capacity guessed before the join.
+
 Assigning an array into a variable that already holds one **copies into the storage already there**
 rather than rebinding. Extents are fixed at declaration, and an array may be shared by reference with
 a caller — swapping the storage would resize it underneath them. So a short literal fills part of a
@@ -592,6 +614,39 @@ bound and its value. This matters because such bounds arrive from ordinary arith
 **Implementation note:** the conversion is `Int32(exactly: value.rounded(.towardZero))`, never a bare
 `Int32(value)`. The bare form *traps* on those cases, and a Swift trap is not a catchable `Error` —
 it bypasses `run`'s `do`/`catch` and takes the app down with an empty console.
+
+### 7.7.1 `break` and `continue`
+
+```
+break       // leave the innermost enclosing loop
+continue    // abandon this pass and take the next
+```
+
+Both bind to the **innermost** enclosing loop and there are no labels, so neither can
+leave two loops at once. An `if` is not a loop: `break` inside an `if` inside a `for`
+leaves the `for`, and `break` inside an `if` that is not inside any loop is a parse
+error ([§13.2](#132-parse-errors)).
+
+In a `for`, `continue` still advances the counter - the step belongs to the loop, not to
+the body, so it skips the rest of the pass rather than the pass itself:
+
+```
+for i < 5 {
+  if i % 2 = 0 { continue }
+  ? i                          // 1 3
+}
+```
+
+**Implementation note.** `Interpreter.Flow` carries `.broke` and `.continued` beside
+`.returned`. Anything but `.normal` stops the enclosing statement list and travels
+outward until something claims it - a loop claims the first two, a call claims the
+third. Because the parser refuses `break` and `continue` outside a loop, neither can
+reach a call boundary unclaimed, which is why `call` needs no case for them.
+
+> **2.x and early 3.0 note.** Neither word existed, and the absence shaped the programs
+> written against it: a search scanned its whole range behind a guard that kept the
+> first hit, rather than stopping when it found one. `Examples/prime.shm` and
+> `Examples/strsplit.shm` both carried that shape and no longer do.
 
 ### 7.8 Print
 
@@ -860,9 +915,8 @@ char s[8] : "abc"
 
 There are no string built-ins — no length-of-contents, no search, no split, no case folding. They are
 writable in Shalimar itself and are left to the programmer, in the same way `rad()` in
-`Examples/rotmat.shm` is. Two things shape how they come out: there is no `break`, so a search scans
-with a guard rather than stopping early; and there is no array of strings, so a list of names cannot
-be held or sorted.
+`Examples/rotmat.shm` is. One thing still shapes how they come out: there is no array of strings, so
+a list of names cannot be held or sorted. `Examples/strsplit.shm` is the worked example.
 
 ---
 
@@ -987,6 +1041,7 @@ is trustworthy — the lexer's error is reported alone.
 - `Malformed number '1.2.3'` — also `'1e'`, `'1e-'` ([§2.3](#23-numbers)).
 - `'99999999999' is too big for int - add '.'`
 - `'!' is not a command - use '??' or '!='`
+- `Unclosed string - add '"'` — on the line the quote opens ([§2.4](#24-string-literals)).
 - `Unexpected character 'х' (U+0445)` — the code point is not internals; it is the only way to tell a
   Cyrillic `х` from a Latin `x` on screen ([§2.2](#22-identifiers)).
 
@@ -1000,6 +1055,7 @@ Reported one at a time; parsing stops at the first.
 - `'?' must start its line`
 - `'x': declare it at the top of the function`
 - `'return' outside a function`
+- `'break' outside a loop` / `'continue' outside a loop`
 - `'?' must be inside a function`
 - `No '.size' - use .row, .col or .dim(n)` / `'.row' is read-only` / `'.dim' needs an axis, as
   .dim(0)`
@@ -1011,8 +1067,9 @@ it finds, then refuses to run if any of them is an error. This is why several di
 at once, and why warnings appear for programs that still run.
 
 Errors here cover undefined names, type mismatches, arity, array extents that can be folded, reserved
-names, returns that do not match the output list, and the two ways an array cannot be created by
-assignment — `Declare the array 'C' first` for a non-literal right-hand side, and
+names, returns that do not match the output list, arithmetic on a `char`
+(`'+' does not apply to char`, [§5.3](#53-what-does-not-convert)), and the two ways an array cannot
+be created by assignment — `Declare the array 'C' first` for a non-literal right-hand side, and
 `An all-blank literal cannot create 'Z'` for a literal with no entry to take a type from
 ([§7.1.1](#711-omitted-entries)).
 
@@ -1067,8 +1124,9 @@ Real, verified behavior of the current interpreter, worth knowing before extendi
 3. **`real` → `int` narrowing is silent** ([§5.2](#52-widening-and-narrowing)). Now that `int()` is
    callable, requiring the narrowing to be written explicitly is a viable third option; it would want
    measuring as a warning first, since the blast radius across existing programs is unknown.
-4. **There is no `break` or early exit from a loop.** Any search function therefore scans its whole
-   range with a guard rather than stopping when it finds the answer.
+4. **A loop cannot be left from more than one level at once.** `break` and `continue` bind to the
+   innermost loop and there are no labels, so escaping two loops needs a flag or a `return`
+   ([§7.7.1](#771-break-and-continue)).
 5. **There is no input.** A program only prints.
 6. **A print/return item list can swallow a following bare call** — `looksLikeNewStatement` doesn't
    recognize `identifier(`. The line check is what covers it in practice
