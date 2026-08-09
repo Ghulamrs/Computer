@@ -5,12 +5,12 @@ fun <> = main() {
   if n % 2 = 0 {
     f : 2
   }
+  // break stops at the 1st factor.
   q : ceil(sqrt(n))
   for j : 3 to q step 2 {
-    if f = 0 {
-      if n % j = 0 {
-        f : j
-      }
+    if n % j = 0 {
+      f : j
+      break
     }
   }
   ? n

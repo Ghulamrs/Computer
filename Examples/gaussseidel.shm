@@ -1,0 +1,53 @@
+// gaussseidel.shm
+// Solves A x = b by sweeping each
+// unknown in turn, each one using
+// values already updated in this
+// same sweep. x is filled in place;
+// the output is the sweep count.
+// A must be diagonally dominant.
+fun <int> = solve(A[][]: real,
+                  b[]: real,
+                  x[]: real) {
+  // Locals belong at the top of a
+  // function, never inside a loop.
+  real tol : 1e-10
+  real diff : 0.0
+  real sum : 0.0
+  real next : 0.0
+  real d : 0.0
+  n : A.row
+
+  for sweep < 100 {
+    diff : 0.0
+    for i < n {
+      sum : b[i]
+      for j < n {
+        if j != i {
+          sum -: A[i][j] * x[j]
+        }
+      }
+      next : sum / A[i][i]
+      d : abs(next - x[i])
+      diff : max(diff, d)
+      x[i] : next
+    }
+    if diff < tol {
+      return sweep + 1
+    }
+  }
+  return -1
+}
+
+fun <> = main() {
+  real A[3][3] : {{ 4.0,-1.0, 0.0},
+                  {-1.0, 4.0,-1.0},
+                  { 0.0,-1.0, 4.0}}
+  real b[3] : {2.0, 4.0, 10.0}
+  real x[3]
+
+  sweeps : solve(A, b, x)
+  ? "solved in" sweeps "sweeps"
+  ? x
+}
+// expected: solved in 14 sweeps
+// expected: 1.000000  2.000000  3.000000

@@ -1,8 +1,11 @@
 // invert.shm
-// Gauss-Jordan elimination without pivoting, in place: the matrix is
-// overwritten by its inverse and the determinant comes back as the value.
-// Columns past the last row are carried as right-hand sides, so a matrix
-// augmented with b comes back holding the inverse and A^-1 b together.
+// Gauss-Jordan without pivoting, in
+// place: a is overwritten by its
+// inverse and the determinant is
+// returned. Columns past the last
+// row ride along as right-hand
+// sides, so an augmented matrix
+// comes back holding both.
 fun <real> = invert(a[][]: real) {
   real tol : pow(10.0, 0.0 - 30.0)
   real det : 1.0
@@ -13,16 +16,17 @@ fun <real> = invert(a[][]: real) {
   for i : 0 to n - 1 {
     det : det * a[i][i]
 
-    // No pivoting, so a pivot that has collapsed is nursed rather than swapped
-    // away: an exact zero means singular, anything smaller than tol is pinned
-    // to tol so the division below stays finite.
+    // No pivoting, so a collapsed
+    // pivot is pinned to tol. An
+    // exact zero means singular.
     if abs(det) < tol | abs(det) = tol {
       if a[i][i] = 0.0 { return det }
       det : tol
     }
 
-    // Writing 1 and 0 into the pivot column before scaling puts the identity
-    // into the storage just read, which is what keeps the inverse in place.
+    // Writing 1 and 0 into a pivot
+    // column puts the identity into
+    // the storage just read.
     r : 1.0 / a[i][i]
     a[i][i] : 1.0
     for j : 0 to nc - 1 {
@@ -58,13 +62,15 @@ fun <> = main() {
   ? "inverse, det" d
   ? m
 
-  // Second row is twice the first, so the second pivot arrives as an exact
-  // zero and the run stops there.
+  // Row two is twice row one, so
+  // the second pivot is exactly 0.
   d : invert(s)
   ? "singular, det" d
 
-  // Two equations in two unknowns with b in the third column: the 2x2 block
-  // comes back as the inverse, the last column as the solution.
+  // Two unknowns, b in column 3:
+  // the 2x2 block comes back as the
+  // inverse, the last column as the
+  // solution.
   d : invert(ab)
   ? "solved, det" d
   ? ab

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate Examples/scan-sheets.html from the .shm files in this directory.
+"""Regenerate Tools/scan-sheets.html from the programs in Examples/.
 
 The sheets exist to be photographed and scanned back in by the app, so every line on them -
 including each program's name and its expected result - is real Shalimar source, written as a "//"
@@ -7,7 +7,7 @@ comment. Generating the page from the files rather than maintaining both means t
 and the committed program cannot drift apart, which would be a miserable thing to debug from a
 photograph.
 
-    python3 Examples/build-sheets.py
+    python3 Tools/build-sheets.py
 """
 
 import html
@@ -27,7 +27,7 @@ HEAD = '''<!doctype html>
      screen photographs with far more glare. No syntax colouring either - coloured tokens are
      lower contrast than plain black, and contrast is the whole game here.
 
-     GENERATED from Examples/*.shm by Examples/build-sheets.py - edit the .shm files, not this. */
+     GENERATED from Examples/*.shm by Tools/build-sheets.py - edit the .shm files, not this. */
   :root { color-scheme: light; }
 
   * { box-sizing: border-box; }
@@ -114,10 +114,13 @@ TAIL = '''
 
 
 def main():
+    # Examples/ holds only shippable programs now - this tool lives beside the page it
+    # writes, one directory over.
     here = os.path.dirname(os.path.abspath(__file__))
+    examples = os.path.join(os.path.dirname(here), "Examples")
     sheets = []
     for name in ORDER:
-        with open(os.path.join(here, name)) as handle:
+        with open(os.path.join(examples, name)) as handle:
             source = handle.read().rstrip("\n")
         sheets.append('<section class="sheet">\n<pre>%s</pre>\n</section>\n' % html.escape(source))
 
