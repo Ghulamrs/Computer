@@ -1,49 +1,37 @@
 // invert.shm
 // Gauss-Jordan without pivoting, in
-// place: a is overwritten by its
-// inverse and the determinant is
-// returned.
+// place: a becomes its inverse and
+// the determinant is returned.
 fun <real> = invert(a[][]: real) {
   real tol : 1.0e-30
   real det : 1.0
   real r : 0.0
-  int n : a.row
 
-  // Only a square matrix has an
-  // inverse, so anything else is
-  // refused before a single division.
-  // 0 is the answer, the same one a
-  // singular matrix gets and for the
-  // same reason: there is none.
   if a.row != a.col {
     return 0.0
   }
 
-  for i < n {
+  for i < a.row {
     det : det * a[i][i]
 
-    // No pivoting, so a collapsed
-    // pivot is pinned to tol. An
-    // exact zero means singular.
+    // A collapsed pivot is pinned to
+    // tol; an exact zero is singular.
     if abs(det) < tol | abs(det) = tol {
       if a[i][i] = 0.0 { return det }
       det : tol
     }
 
-    // Writing 1 and 0 into a pivot
-    // column puts the identity into
-    // the storage just read.
     r : 1.0 / a[i][i]
     a[i][i] : 1.0
-    for j < n {
+    for j < a.col {
       a[i][j] : r * a[i][j]
     }
 
-    for k < n {
+    for k < a.row {
       if k != i & a[k][i] != 0.0 {
         r : a[k][i]
         a[k][i] : 0.0
-        for j < n {
+        for j < a.col {
           a[k][j] -: r * a[i][j]
         }
       }
@@ -57,26 +45,22 @@ fun <> = main() {
   real m[3][3] : {{4.0, 7.0, 2.0},
                   {3.0, 6.0, 1.0},
                   {2.0, 5.0, 3.0}}
+  // Row two is twice row one.
   real s[3][3] : {{1.0, 2.0, 3.0},
                   {2.0, 4.0, 6.0},
                   {1.0, 1.0, 1.0}}
+  real tall[3][2] : {{1.0, 2.0},
+                     {3.0, 4.0},
+                     {5.0, 6.0}}
   real d : 0.0
 
   d : invert(m)
   ? "inverse, det" d
   ? m
 
-  // Row two is twice row one, so
-  // the second pivot is exactly 0.
   d : invert(s)
   ? "singular, det" d
 
-  // Three rows, two columns: not
-  // square, so it is refused before
-  // any arithmetic happens.
-  real tall[3][2] : {{1.0, 2.0},
-                     {3.0, 4.0},
-                     {5.0, 6.0}}
   d : invert(tall)
   ? "not square, det" d
 }

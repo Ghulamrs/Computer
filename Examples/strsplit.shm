@@ -1,14 +1,13 @@
 // strsplit.shm
 // Split a string in two. An array
 // cannot be returned, so the pieces
-// go in and are filled. The output
-// says where the space was, or -1.
+// go in and are filled.
 fun <int> = split(s[]: char,
                   a[]: char,
                   b[]: char) {
   at : -1
-  // char(32) is the space: there is
-  // no character literal.
+  // No character literal, so char(32)
+  // is the space.
   for i < s.row {
     if s[i] = char(32) {
       at : i
@@ -19,8 +18,8 @@ fun <int> = split(s[]: char,
     return -1
   }
 
-  // Guard the widths: a piece too
-  // big for its box is clipped.
+  // A piece too big for its box is
+  // clipped.
   for i < at {
     if i < a.row-1 {
       a[i] : s[i]

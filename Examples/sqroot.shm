@@ -1,8 +1,6 @@
 // sqroot.shm
 // Newton's method: the loop that
-// sqrt() hides. Each step averages
-// x and n/x, which doubles the
-// correct digits every time.
+// sqrt() hides.
 fun <real> = root(n: real) {
   real x : 0.0
   real last : 0.0
