@@ -1,7 +1,12 @@
 // factorial.shm
-// The same number two ways. The loop
-// carries a running product forward;
-// the function calls itself and lets
+// The same number two ways, so the
+// two can be compared. Both are
+// functions; main only asks for the
+// answers and prints them.
+//
+// factloop carries a running product
+// forward, one multiplication at a
+// time. fact calls itself and lets
 // the products pile up until the
 // bottom is reached.
 //
@@ -9,6 +14,14 @@
 // a case that does not, or it never
 // comes back. Here it is n < 2, and
 // every call moves towards it.
+fun <int> = factloop(n: int) {
+  f : 1
+  for i : 2 to n {
+    f : f * i
+  }
+  return f
+}
+
 fun <int> = fact(n: int) {
   if n < 2 {
     return 1
@@ -18,12 +31,8 @@ fun <int> = fact(n: int) {
 
 fun <> = main() {
   n : 10
-  f : 1
-  for i : 2 to n {
-    f : f * i
-  }
   ? "factorial of" n
-  ? "by loop" f
+  ? "by loop" factloop(n)
   ? "by recursion" fact(n)
 }
 // expected: factorial of 10
