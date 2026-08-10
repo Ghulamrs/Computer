@@ -1,12 +1,15 @@
 // rotations.shm
-// The three axis rotations, each written as one array literal assigned straight
-// into a local. Compare rotmat.shm, which fills a caller-supplied array instead:
-// that shape is the one to reach for when the result has to outlive the call or
-// be composed, but this one reads closer to how the matrix is written on paper.
+// The three axis rotations as array
+// literals. rotmat.shm builds the
+// same three into a caller's array.
 //
-// The angle is pi/4 rather than a right angle on purpose. At pi/2 every entry is
-// exactly 0 or 1, which looks the same whether the trig was evaluated or not; at
-// pi/4 the off-diagonal entries are sqrt(2)/2 and the arithmetic is visible.
+// Right-handed - the -sin sits in
+// the row above the row holding the
+// 1.0, counting round.
+//
+// pi/4, not pi/2: at a right angle
+// every entry is 0 or 1 whether the
+// trig ran or not.
 fun <> = ROX(angle: real) {
   X : {{1.0,         0.,          0.},
        {0.,  cos(angle),  sin(angle)},

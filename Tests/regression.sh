@@ -15,13 +15,13 @@
 # the trailing space the print statements emit after each item.
 #
 # ---------------------------------------------------------------------------------
-# SPEC STATUS: SHALIMAR_LANGUAGE.md still describes the 2.x language - untyped
-# parameters, named outputs in the <> list, "everything is a Double", strings that
-# degrade to 0.0. 3.0 replaced all of that with int/real/char, a Checker stage, and
-# arrays. Until that document is rewritten it cannot arbitrate, so this file is the
-# working record of 3.0 behaviour. Where a case below encodes a deliberate 3.0
-# change, the comment says which 2.x rule it replaced, so the eventual spec rewrite
-# has something to work from.
+# SPEC STATUS: SHALIMAR_LANGUAGE.md describes the 3.0 language and is the authority.
+# Every case here traces to a claim in that document, and when a case and the document
+# disagree, the document wins and the interpreter is what gets fixed - not the case.
+# This file used to carry the opposite note, from the period when the spec still
+# described 2.x and could not arbitrate; it was rewritten in cff6505 and can.
+# Where a case encodes a deliberate 3.0 change, the comment says which 2.x rule it
+# replaced.
 # ---------------------------------------------------------------------------------
 #
 set -uo pipefail
@@ -903,6 +903,150 @@ t "quadratic program" "Solution 1.0000000 1.0000000" 'fun <> = main() {
 ? "Solution" x1 x2 }
 }'
 
+# ------------------------------------------------- 5.3 char never joins arithmetic
+# Mixing a char with a number was always refused. char-with-char was not: widest() of
+# two equal types is that type, so nothing was left to disagree about and 's[0]+s[1]'
+# came back a real. Comparison and ordering stay legal - that is what char is for.
+t "char plus char refused" "'+' does not apply to char" 'fun <> = main() { char s[8] : "ab"
+? s[0] + s[1] }'
+t "char times char refused" "'*' does not apply to char" 'fun <> = main() { char s[8] : "ab"
+? s[0] * s[1] }'
+t "char minus char refused" "'-' does not apply to char" 'fun <> = main() { char s[8] : "ab"
+? s[0] - s[1] }'
+t "char plus int still refused" "Cannot use int where char is required" 'fun <> = main() { char s[8] : "ab"
+? s[0] + 1 }'
+t "char orders against char" "1" 'fun <> = main() { char s[8] : "ab"
+? s[0] < s[1] }'
+t "char compares equal" "1" 'fun <> = main() { char s[8] : "ab"
+? s[0] = s[0] }'
+t "int(c) is how a char reaches arithmetic" "98" 'fun <> = main() { char s[8] : "ab"
+? int(s[0]) + 1 }'
+t "joining two strings is untouched" "abcd" 'fun <> = main() { char a[8] : "ab"
+char b[8] : "cd"
+? a + b }'
+
+# ------------------------------------------------- 2.4 a string literal must be closed
+# The closing quote used to be optional and [^"]* matched newlines, so one stray quote
+# ate the rest of the file and reported a parse error far below, on a line that was fine.
+t "unclosed string" "Unclosed string" 'fun <> = main() {
+? "hello }'
+t "unclosed string reports its own line" "line 2" 'fun <> = main() {
+? "hello
+? "world" }'
+t "a closed string is unaffected" "a, b: c (d)" 'fun <> = main() {
+? "a, b: c (d)" }'
+t "an empty string is still a string" "ok" 'fun <> = main() {
+? "" "ok" }'
+
+# ------------------------------------------------- 5.5 the output list is required
+# 'fun = main()' used to parse and run - a second spelling of the header the grammar
+# never described.
+t "output list is required" "Unexpected '='" 'fun = main() {
+? 1 }'
+t "an empty output list is still written" "1" 'fun <> = main() {
+? 1 }'
+
+# --------------------------------------------------------- break / continue
+# Loop control binds to the innermost loop and nothing else. 'if' raises the block
+# depth but not the loop depth, which is what makes a break inside an if legal and a
+# break inside a bare if illegal - the two cases either side of that line are both
+# here because one counter serving both jobs would pass one and fail the other.
+t "break leaves a while" "0 1 2 3 done" 'fun <> = main() {
+  i : 0
+  while 1 {
+    if i > 3 { break }
+    ?? i
+    i : i + 1
+  }
+? "done" }'
+t "break leaves a for" "0 1 2 done" 'fun <> = main() {
+  for i < 10 {
+    if i = 3 { break }
+    ?? i
+  }
+? "done" }'
+t "continue skips the rest of the pass" "1 3 5" 'fun <> = main() {
+  for i : 0 to 6 {
+    if i % 2 = 0 { continue }
+    ?? i
+  }
+? "" }'
+t "continue still advances the counter" "0 1 2 3 4" 'fun <> = main() {
+  for i < 5 {
+    ?? i
+    continue
+  }
+? "" }'
+t "break leaves only the innermost loop" "0 1 2" 'fun <> = main() {
+  for i < 3 {
+    for j < 3 {
+      if j = 1 { break }
+      ?? i
+    }
+  }
+? "" }'
+t "break in a while inside a for" "a a a" 'fun <> = main() {
+  for i < 3 {
+    while 1 {
+      ?? "a"
+      break
+    }
+  }
+? "" }'
+t "break outside a loop"  "'break' outside a loop" 'fun <> = main() {
+  break
+}'
+t "continue outside a loop"  "'continue' outside a loop" 'fun <> = main() {
+  continue
+}'
+t "break inside an if but outside a loop"  "'break' outside a loop" 'fun <> = main() {
+  if 1 { break }
+}'
+t "break at global scope" "must be inside a function" 'break
+fun <> = main() {
+? 1 }'
+t "loop depth resets between functions"  "'break' outside a loop" 'fun <> = g() {
+  for i < 2 {
+    ? i
+  }
+}
+fun <> = main() {
+  break
+}'
+t "break is a keyword, not a name"  "Unexpected ':'" 'fun <> = main() {
+  for i < 2 {
+    break : 5
+  }
+}'
+t "BREAK folds case like every keyword"  "'break' outside a loop" 'fun <> = main() {
+  BREAK
+}'
+# 'while 1 { ... return }' cannot finish without returning, and used to be reported
+# as if it could. A break in that body puts the escape back, so the error returns.
+t "while 1 with a return satisfies the output" "3" 'fun <int> = f() {
+  while 1 { return 3 }
+}
+fun <> = main() {
+? f() }'
+t "while 1 with a break still needs a return" "can finish without a return" 'fun <int> = f() {
+  while 1 {
+    if 1 { break }
+    return 3
+  }
+}
+fun <> = main() {
+? f() }'
+# The break belongs to the inner for, so it does not let the outer while finish -
+# the return below it still runs on every path, and the function is accepted.
+t "a nested loop owns its own break" "3" 'fun <int> = f() {
+  while 1 {
+    for i < 2 { break }
+    return 3
+  }
+}
+fun <> = main() {
+? f() }'
+
 # ----------------------------------------------------- parser regressions guarded
 # Each of these failed at some point during the parser refactor; they are the
 # reason this file exists.
@@ -1056,27 +1200,31 @@ SNIPPETS
 # thing here to an end-to-end test: if one stops running, what gets photographed off
 # paper stops working. They also cover ground the unit cases do not - array arguments
 # by reference, nested functions, and grid output at real sizes.
-e() {
-    local out
-    out=$(perl -e 'alarm 10; exec @ARGV' "$BUILD/shalimar" "$ROOT/Examples/$1" 2>&1 | tr '\n' ' ')
-    if [[ "$out" == *"$2"* ]]; then
-        pass=$((pass + 1))
-    else
+#
+# Every program in Examples/ is run, and every '// expected:' line it carries is
+# asserted against its output. The expectations live in the program rather than in a
+# list here, so a file states its own contract and dropping one into the directory
+# tests it - there is no second copy to keep in step, and no way to add an example
+# the suite quietly ignores. A file with no '// expected:' line is itself a failure,
+# which is what stops the directory filling with programs nothing checks.
+for path in "$ROOT"/Examples/*.shm; do
+    name=$(basename "$path")
+    out=$(perl -e 'alarm 10; exec @ARGV' "$BUILD/shalimar" "$path" 2>&1 | tr '\n' ' ')
+    wanted=0
+    while IFS= read -r want; do
+        wanted=$((wanted + 1))
+        if [[ "$out" == *"$want"* ]]; then
+            pass=$((pass + 1))
+        else
+            fail=$((fail + 1))
+            failures+=("example $name"$'\n'"      want: $want"$'\n'"      got:  $out")
+        fi
+    done < <(sed -n 's|^// expected: ||p' "$path")
+    if (( wanted == 0 )); then
         fail=$((fail + 1))
-        failures+=("example $1"$'\n'"      want: $2"$'\n'"      got:  $out")
+        failures+=("example $name"$'\n'"      carries no '// expected:' line")
     fi
-}
-e factorial.shm "factorial of 10  is 3628800"
-e fibonacci.shm "0 1 1 2 3 5 8 13 21 34 55 89"
-e gcd.shm       "gcd of 48 18  is 6"
-e prime.shm     "97  is a prime"
-e quadratic.shm "roots 2.0000000 3.0000000"
-e table.shm     "7 x 9 = 63"
-e invert.shm    "1.444444  -1.222222  -0.555556"
-e invert.shm    "singular, det 0.0000000"
-e rotations.shm "0.707107   0.707107"
-e rotmat.shm    "yaw 90"
-e rotmat.shm    "1.000000   0.000000   0.000000"
+done
 
 # ------------------------------------------------------- scan layout (OCR line rebuild)
 # A second binary: ScanLayout.swift is part of the app but has no UIKit or Vision

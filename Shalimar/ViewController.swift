@@ -20,6 +20,14 @@ extension FileManager {
 class FirstViewController: UITableViewController, Storyboarded {
     weak var coordinator: MainCoordinator?
     var option = [String]()
+
+    // The programs that ship with the app. Read once on appearing, like the user's own,
+    // so the two lists are built the same way.
+    private var examples = [String]()
+
+    private enum Section: Int, CaseIterable {
+        case mine = 0, examples = 1
+    }
     
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -50,6 +58,7 @@ class FirstViewController: UITableViewController, Storyboarded {
 
     @objc func newProgramTapped() {
         coordinator?.fileURL = ""
+        coordinator?.fileIsExample = false
         coordinator?.compute()
     }
     
@@ -63,7 +72,11 @@ class FirstViewController: UITableViewController, Storyboarded {
                 option.append(name)
             }
         }
-        tableView.backgroundView = option.isEmpty ? emptyStateView() : nil
+        examples = BundledExamples.names()
+        // No background empty state any more: the examples section is never empty, so the
+        // screen can no longer look like one that failed to load. The "nothing here yet"
+        // message belongs to the user's own section and is shown as a row inside it.
+        tableView.backgroundView = nil
         tableView.reloadData()
     }
 
@@ -71,39 +84,80 @@ class FirstViewController: UITableViewController, Storyboarded {
     // nothing here at all - and a blank white screen under a title reads as a screen that
     // failed to load rather than one that is waiting. The label says where the programs
     // will come from and points at the one control on the screen that makes one.
-    private func emptyStateView() -> UIView {
-        let label = UILabel()
-        label.text = "No programs yet.\n\nTap + to write one."
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        label.textColor = UIColor.secondaryLabel
-        label.font = UIFont.systemFont(ofSize: 17)
-        return label
+    override func numberOfSections(in tableView: UITableView) -> Int {
+        return Section.allCases.count
     }
 
-    override func numberOfSections(in tableView: UITableView) -> Int {
-        return 1
+    override func tableView(_ tableView: UITableView, titleForHeaderInSection section: Int) -> String? {
+        switch Section(rawValue: section) {
+        case .mine:     return "My programs"
+        // Said on the header rather than on every row: it is a property of the whole
+        // section, and repeating it twelve times would read as a warning rather than a
+        // label.
+        case .examples: return examples.isEmpty ? nil : "Examples (read-only)"
+        case .none:     return nil
+        }
     }
+
+    // No footer explaining the rule at length: a plain-style table gives a section footer
+    // one sticky line, which truncated the sentence mid-word. The header carries the whole
+    // of what the user needs before opening one, and saving an example asks for a name,
+    // which says the rest at the moment it matters.
 
     override func tableView(_ tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return option.count
+        switch Section(rawValue: section) {
+        // One row carrying the "nothing here yet" message, so the section still has a
+        // shape before the user has saved anything.
+        case .mine:     return max(option.count, 1)
+        case .examples: return examples.count
+        case .none:     return 0
+        }
+    }
+
+    /// True for the placeholder row standing in for an empty "My programs".
+    private func isPlaceholder(_ indexPath: IndexPath) -> Bool {
+        Section(rawValue: indexPath.section) == .mine && option.isEmpty
     }
 
     override func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCell(withIdentifier: "Cell", for: indexPath) as UITableViewCell
-        
-        let item: String = option[indexPath.row]
-        cell.textLabel?.text = item
-        
+
+        cell.textLabel?.textColor = UIColor.label
+        cell.selectionStyle = .default
+        cell.accessoryType = .disclosureIndicator
+
+        if isPlaceholder(indexPath) {
+            cell.textLabel?.text = "No programs yet - tap + to write one."
+            cell.textLabel?.textColor = UIColor.secondaryLabel
+            cell.selectionStyle = .none
+            cell.accessoryType = .none
+            return cell
+        }
+
+        switch Section(rawValue: indexPath.section) {
+        case .examples: cell.textLabel?.text = examples[indexPath.row]
+        default:        cell.textLabel?.text = option[indexPath.row]
+        }
         return cell
     }
-    
+
     override func tableView(_ tableView: UITableView, didUnhighlightRowAt indexPath: IndexPath) {
-        coordinator?.fileURL = option[indexPath.row]
+        guard !isPlaceholder(indexPath) else { return }
+
+        if Section(rawValue: indexPath.section) == .examples {
+            coordinator?.fileURL = examples[indexPath.row]
+            coordinator?.fileIsExample = true
+        } else {
+            coordinator?.fileURL = option[indexPath.row]
+            coordinator?.fileIsExample = false
+        }
         coordinator?.compute()
     }
 
+    // Only the user's own programs can be deleted. An example is in the bundle, where
+    // the delete would fail anyway - refusing the swipe says so before it is attempted.
     override func tableView(_ tableView: UITableView, trailingSwipeActionsConfigurationForRowAt indexPath: IndexPath) -> UISwipeActionsConfiguration? {
+        guard Section(rawValue: indexPath.section) == .mine, !isPlaceholder(indexPath) else { return nil }
         let delete = deleteAction(at: indexPath)
         return UISwipeActionsConfiguration(actions: [delete])
     }
@@ -114,10 +168,13 @@ class FirstViewController: UITableViewController, Storyboarded {
             
             if  self.deleteItem(urlName: self.option[indexPath.row]) {
                 self.option.remove(at: indexPath.row)
-                self.tableView.deleteRows(at: [indexPath], with: .automatic)
-                // Deleting the last program empties the list without leaving the screen,
-                // so the empty state has to be put up here too and not only on appearing.
-                self.tableView.backgroundView = self.option.isEmpty ? self.emptyStateView() : nil
+                // Deleting the last one leaves the section holding its placeholder row
+                // rather than no rows, so the row is replaced instead of removed.
+                if self.option.isEmpty {
+                    self.tableView.reloadSections([Section.mine.rawValue], with: .automatic)
+                } else {
+                    self.tableView.deleteRows(at: [indexPath], with: .automatic)
+                }
             }
             completion(true)
         }

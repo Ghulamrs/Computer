@@ -270,6 +270,34 @@ final class HelpViewController: UIViewController {
     The counter belongs to the loop and
     disappears after it.
 
+    LEAVING A LOOP EARLY
+    --------------------
+      for i < s.row {
+        if s[i] = char(32) {
+          at : i
+          break
+        }
+      }
+
+    'break' leaves the loop. 'continue' takes
+    the next pass:
+
+      for i < 5 {
+        if i % 2 = 0 {
+          continue
+        }
+        ? i
+      }
+
+    prints 1 and 3. In a 'for' the counter still
+    advances - the step belongs to the loop, not
+    to the body.
+
+    Both bind to the innermost loop. An 'if' is
+    not a loop, so a break inside one leaves the
+    loop around it; outside every loop it is an
+    error.
+
     FUNCTIONS
     ---------
       fun <outputs> = name(inputs) { body }
@@ -449,8 +477,9 @@ final class HelpViewController: UIViewController {
 
       There is no array of strings.
 
-      There is no break or early exit from a
-      loop.
+      break and continue bind to the innermost
+      loop only. There are no labels, so leaving
+      two loops at once needs a flag or a return.
 
       There is no input. A program only prints.
 

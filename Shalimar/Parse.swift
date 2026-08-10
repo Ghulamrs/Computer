@@ -13,6 +13,7 @@ enum ParseError: Error, CustomStringConvertible {
     case PrintNotAtLineStart(String)
     case DeclarationInSubScope(String)
     case ReturnOutsideFunction
+    case LoopControlOutsideLoop(String)
     case StatementInGlobalSpace(String)
     case UnknownAttribute(String)
     case AttributeNotAssignable(String)
@@ -34,6 +35,8 @@ enum ParseError: Error, CustomStringConvertible {
             return "'\(name)': declare it at the top of the function"
         case .ReturnOutsideFunction:
             return "'return' outside a function"
+        case .LoopControlOutsideLoop(let word):
+            return "'\(word)' outside a loop"
         case .StatementInGlobalSpace(let tok):
             return "'\(tok)' must be inside a function"
         case .UnknownAttribute(let name):
@@ -63,6 +66,12 @@ class Parser {
     private var enclosingPrototype: PrototypeNode?
 
     private var blockDepth = 0
+
+    // Counts the loops a statement is standing inside, which is the whole of what
+    // 'break' and 'continue' need to be legal. Kept apart from blockDepth because
+    // that one counts every sub-scope - an 'if' body raises it, and an 'if' is not
+    // something either word can escape.
+    private var loopDepth = 0
 
     init(tokens: [Token]) {
         self.tokens = tokens
@@ -155,6 +164,8 @@ class Parser {
         case .Step:   return "step"
         case .Fun:    return "fun"
         case .Return: return "return"
+        case .Break:    return "break"
+        case .Continue: return "continue"
         case .Int:    return "int"
         case .Real:   return "real"
         case .Char:   return "char"
@@ -271,17 +282,19 @@ class Parser {
         let line = peekCurrentToken().line
         try consume(.Fun)
 
+        // The output list is required, even when it is empty: every definition reads
+        // 'fun <...> = name(...)'. It used to be optional, so 'fun = main()' parsed and
+        // ran - a second spelling of the header that the grammar never described and
+        // nothing else in the language would have recognised.
         var outputs = [ShalimarType]()
-        if peekCurrentToken().kind == .Operator("<") {
-            _ = popCurrentToken()
-            if !match(.Operator(">")) {
-                while true {
-                    outputs.append(try parseScalarType())
-                    if match(.Comma) { continue }
-                    break
-                }
-                try consume(.Operator(">"))
+        try consume(.Operator("<"))
+        if !match(.Operator(">")) {
+            while true {
+                outputs.append(try parseScalarType())
+                if match(.Comma) { continue }
+                break
             }
+            try consume(.Operator(">"))
         }
         try consume(.Operator("="))
 
@@ -291,11 +304,14 @@ class Parser {
 
         let previousPrototype = enclosingPrototype
         let previousDepth = blockDepth
+        let previousLoopDepth = loopDepth
         enclosingPrototype = prototype
         blockDepth = 0
+        loopDepth = 0
         defer {
             enclosingPrototype = previousPrototype
             blockDepth = previousDepth
+            loopDepth = previousLoopDepth
         }
 
         return FunctionNode(prototype: prototype, body: try parseBody())
@@ -339,6 +355,13 @@ class Parser {
         return try parseBody()
     }
 
+    // A loop's own body, which is the only place 'break' and 'continue' mean anything.
+    private func parseLoopBody() throws -> [StmtNode] {
+        loopDepth += 1
+        defer { loopDepth -= 1 }
+        return try parseSubScope()
+    }
+
     func parseStatement() throws -> StmtNode {
         let line = peekCurrentToken().line
 
@@ -361,6 +384,18 @@ class Parser {
 
         case .Return:
             return try parseReturn(line: line)
+
+        // Checked before the token is taken, so the diagnostic points at the word
+        // itself rather than at whatever follows it.
+        case .Break:
+            guard loopDepth > 0 else { throw ParseError.LoopControlOutsideLoop("break") }
+            _ = popCurrentToken()
+            return BreakNode(line: line)
+
+        case .Continue:
+            guard loopDepth > 0 else { throw ParseError.LoopControlOutsideLoop("continue") }
+            _ = popCurrentToken()
+            return ContinueNode(line: line)
 
         case .PrintLine:
             try requireLineStart("?")
@@ -488,7 +523,7 @@ class Parser {
     private func parseWhile(line: Int) throws -> StmtNode {
         try consume(.While)
         let condition = try parseExpression()
-        return WhileNode(condition: condition, body: try parseSubScope(), line: line)
+        return WhileNode(condition: condition, body: try parseLoopBody(), line: line)
     }
 
     private func parseFor(line: Int) throws -> StmtNode {
@@ -509,7 +544,7 @@ class Parser {
                            start: IntNode(value: 0),
                            end: BinaryOpNode(op: .subtract, lhs: bound, rhs: IntNode(value: 1)),
                            step: step,
-                           body: try parseSubScope(),
+                           body: try parseLoopBody(),
                            line: line)
         }
 
@@ -524,7 +559,7 @@ class Parser {
         }
 
         return ForNode(variable: variable, start: start, end: end, step: step,
-                       body: try parseSubScope(), line: line)
+                       body: try parseLoopBody(), line: line)
     }
 
     func parsePrintItems() throws -> [ExprNode] {

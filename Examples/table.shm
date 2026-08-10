@@ -11,4 +11,6 @@ fun <> = main() {
   }
 }
 // expected: table of 7
-// expected: 7 x 1 = 7 ... 7 x 10 = 70
+// expected: 7 x 1 = 7
+// expected: 7 x 5 = 35
+// expected: 7 x 10 = 70

@@ -103,6 +103,20 @@ public struct ReturnNode: StmtNode {
     }
 }
 
+/// `break` - leave the innermost enclosing loop. The parser refuses one outside a
+/// loop, so nothing downstream has to consider a break arriving at function level.
+public struct BreakNode: StmtNode {
+    public let line: Int
+    public var description: String { "BreakNode" }
+}
+
+/// `continue` - abandon this iteration and take the next. In a `for` the counter
+/// still advances, because the step belongs to the loop rather than to the body.
+public struct ContinueNode: StmtNode {
+    public let line: Int
+    public var description: String { "ContinueNode" }
+}
+
 public struct IntNode: ExprNode {
     public let value: Int
     public var description: String { "IntNode(\(value))" }

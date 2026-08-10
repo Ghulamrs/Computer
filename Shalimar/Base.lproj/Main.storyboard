@@ -57,22 +57,6 @@
                             <textView clipsSubviews="YES" multipleTouchEnabled="YES" contentMode="scaleToFill" translatesAutoresizingMaskIntoConstraints="NO" id="5Uh-u8-0jA">
                                 <rect key="frame" x="43" y="28" width="261" height="341.5"/>
                                 <color key="backgroundColor" white="1" alpha="1" colorSpace="custom" customColorSpace="genericGamma22GrayColorSpace"/>
-                                <string key="text">fun &lt;&gt; = main() {
-  a : 1
-  b : 2
-  c : 1
-  d : b^2-4*a*c
-  if d &lt; 0 {
-    ? "no real roots"
-  }
-  else {
-     d : sqrt(d)
-     x1 : (-b-d)/(2*a)
-     x2 : (-b+d)/(2*a)
-     ? x1 x2
-  }
-}
-</string>
                                 <color key="textColor" red="0.0" green="0.58980089430000004" blue="1" alpha="1" colorSpace="custom" customColorSpace="sRGB"/>
                                 <fontDescription key="fontDescription" name="CourierNewPS-BoldMT" family="Courier New" pointSize="16"/>
                                 <textInputTraits key="textInputTraits" autocorrectionType="no" spellCheckingType="no"/>
@@ -94,11 +78,11 @@
                             <constraint firstItem="Gkn-N0-i70" firstAttribute="top" secondItem="7pn-D0-7tD" secondAttribute="top" constant="8" id="Nct-Fr-wWx"/>
                             <constraint firstItem="Gkn-N0-i70" firstAttribute="leading" secondItem="7pn-D0-7tD" secondAttribute="leading" id="Slz-dc-DTq"/>
                             <constraint firstItem="7pn-D0-7tD" firstAttribute="bottom" secondItem="KD6-St-YIe" secondAttribute="bottom" constant="20" id="Uvy-wq-xcS"/>
-                            <constraint firstItem="KD6-St-YIe" firstAttribute="top" secondItem="5Uh-u8-0jA" secondAttribute="bottom" constant="8" id="con-Tp-Prg"/>
+                            <constraint firstItem="KD6-St-YIe" firstAttribute="top" secondItem="5Uh-u8-0jA" secondAttribute="bottom" constant="8" identifier="consoleGap" id="con-Tp-Prg"/>
                             <constraint firstItem="5Uh-u8-0jA" firstAttribute="top" secondItem="7pn-D0-7tD" secondAttribute="top" constant="8" id="dv8-c3-2m2"/>
                             <constraint firstItem="7pn-D0-7tD" firstAttribute="trailing" secondItem="5Uh-u8-0jA" secondAttribute="trailing" constant="16" id="ftr-Wd-th1"/>
                             <constraint firstItem="Gkn-N0-i70" firstAttribute="height" secondItem="5Uh-u8-0jA" secondAttribute="height" id="pQm-4V-8sK"/>
-                            <constraint firstItem="5Uh-u8-0jA" firstAttribute="height" secondItem="KD6-St-YIe" secondAttribute="height" multiplier="2:1" id="rH2-Ed-1To"/>
+                            <constraint firstItem="5Uh-u8-0jA" firstAttribute="height" secondItem="KD6-St-YIe" secondAttribute="height" multiplier="2:1" identifier="consoleShare" id="rH2-Ed-1To"/>
                         </constraints>
                     </view>
                     <connections>
