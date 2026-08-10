@@ -1238,6 +1238,21 @@ if (( scan_status != 0 )); then
     failures+=("scan layout tests"$'\n'"      see output above"$'\n'"      $scan_out")
 fi
 
+# ------------------------------------------------------------ indent (editor layout)
+# A third binary, same arrangement and for the same reason: Indent.swift decides where a
+# brace and the line after it belong, and is kept clear of UIKit so it can be run here.
+# It was extracted from ComputeViewController after a bug that only typing into a
+# simulator could find - a brace pushed off `if n < 2 { return 1 }` landing under the
+# body instead of under the `if`. Nothing in the editor's layout is reachable from a
+# test unless it lives in a file like this one.
+indent_out=$(swiftc -O "$SRC/Indent.swift" "$ROOT/Tests/indent/main.swift" \
+                    -o "$BUILD/indent" 2>&1) && "$BUILD/indent"
+indent_status=$?
+if (( indent_status != 0 )); then
+    fail=$((fail + 1))
+    failures+=("indent tests"$'\n'"      see output above"$'\n'"      $indent_out")
+fi
+
 # ------------------------------------------------------------------------ report
 echo
 echo "PASS: $pass   FAIL: $fail"

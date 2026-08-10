@@ -242,7 +242,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         super.viewDidAppear(animated)
         guard !hasOpened else { return }
         hasOpened = true
-        if coordinator!.fileURL.isEmpty { typeIn(Self.reindented(source)) }
+        if coordinator!.fileURL.isEmpty { typeIn(Indent.reindented(source)) }
     }
 
     private var hasOpened = false
@@ -744,86 +744,6 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         lineview.contentOffset = program.contentOffset
     }
 
-    // Three spaces a level, which is what the phone column can afford: at 14pt a line
-    // holds about 39 characters, so a wider step pushes nested bodies into wrapping.
-    static let indentWidth = 3
-
-    // Braces opened and closed on one line, ignoring any that are not structure: a brace
-    // inside a string or after // is text. No escape handling, because the lexer has no
-    // escapes - its pattern is "[^"\n]*", so the first quote on the line closes.
-    // leadingCloses counts only the braces before anything else on the line; those are
-    // what pull the line itself back out a level.
-    private static func braceCounts(in line: String) -> (opens: Int, closes: Int, leadingCloses: Int) {
-        var opens = 0, closes = 0, leadingCloses = 0
-        var atLineHead = true
-        var inString = false
-        var previous: Character?
-
-        for char in line {
-            if inString {
-                if char == "\"" { inString = false }
-                previous = char
-                continue
-            }
-            if char == "\"" {
-                inString = true
-                atLineHead = false
-                previous = char
-                continue
-            }
-            if char == "/" && previous == "/" { break }
-
-            switch char {
-            case "{":
-                opens += 1
-                atLineHead = false
-            case "}":
-                closes += 1
-                if atLineHead { leadingCloses += 1 }
-            default:
-                if !char.isWhitespace { atLineHead = false }
-            }
-            previous = char
-        }
-
-        return (opens, closes, leadingCloses)
-    }
-
-    // How deep in braces the text ends up - the level a line appended to it belongs at.
-    static func braceDepth(of source: String) -> Int {
-        var depth = 0
-        for line in source.components(separatedBy: "\n") {
-            let counts = braceCounts(in: line)
-            depth = max(0, depth + counts.opens - counts.closes)
-        }
-        return depth
-    }
-
-    // Lays the whole program out by brace depth. Existing leading space is discarded
-    // rather than respected: the point is to impose one consistent step, and a file
-    // typed on the phone or arriving from the scanner has no indentation worth keeping.
-    static func reindented(_ source: String) -> String {
-        var depth = 0
-        var out = [String]()
-
-        for rawLine in source.components(separatedBy: "\n") {
-            let line = rawLine.trimmingCharacters(in: .whitespaces)
-            guard !line.isEmpty else {
-                out.append("")
-                continue
-            }
-
-            let counts = braceCounts(in: line)
-            // Dedent before writing, so a line that opens with } settles under the line
-            // that opened its group rather than under the group's contents.
-            let level = max(0, depth - counts.leadingCloses)
-            out.append(String(repeating: " ", count: level * indentWidth) + line)
-            depth = max(0, depth + counts.opens - counts.closes)
-        }
-
-        return out.joined(separator: "\n")
-    }
-
     // NSRange offsets are UTF-16, so the document is measured as NSString throughout
     // rather than by Character - the two disagree the moment anything non-ASCII lands in
     // the buffer, and the keyboard traits do not guarantee it cannot.
@@ -831,46 +751,6 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         guard let start = textView.position(from: textView.beginningOfDocument, offset: range.location),
               let end = textView.position(from: start, offset: range.length) else { return nil }
         return textView.textRange(from: start, to: end)
-    }
-
-    // The edit that lays out `text` at its brace level, or nil when what the user typed
-    // already sits where it belongs and can be inserted untouched.
-    private static func indentedInsertion(of text: String,
-                                          into textView: UITextView,
-                                          replacing range: NSRange) -> (text: String, range: NSRange)? {
-        let document = (textView.text ?? "") as NSString
-        guard range.location <= document.length else { return nil }
-        let head = document.substring(to: range.location)
-
-        if text == "\n" {
-            var depth = braceDepth(of: head)
-
-            // A } waiting on the other side of the cursor closes the group the cursor is
-            // standing in, so the line it is about to begin belongs one step out - under
-            // the line that opened the group, not under its contents. Without this, the
-            // pair written on one line, `if n < 2 { return (0, n) }`, sends its closing
-            // brace to the depth of the body when it is pushed down, one step right of
-            // where reindented() would put it and one step right of the `if` it closes.
-            let tail = document.substring(from: NSMaxRange(range))
-            if tail.drop(while: { $0 == " " || $0 == "\t" }).first == "}" {
-                depth = max(0, depth - 1)
-            }
-
-            guard depth > 0 else { return nil }
-            return ("\n" + String(repeating: " ", count: depth * indentWidth), range)
-        }
-
-        // A } only moves its line when nothing precedes it there; typed mid-line, as in
-        // an array literal closing where it opened, it is left exactly where it fell.
-        let lineStart = (head as NSString).range(of: "\n", options: .backwards).location
-        let start = lineStart == NSNotFound ? 0 : lineStart + 1
-        let onLine = document.substring(with: NSRange(location: start, length: range.location - start))
-        guard onLine.allSatisfy({ $0 == " " || $0 == "\t" }) else { return nil }
-
-        let depth = max(0, braceDepth(of: document.substring(to: start)) - 1)
-        let replacement = String(repeating: " ", count: depth * indentWidth) + "}"
-        guard replacement != onLine + "}" else { return nil }
-        return (replacement, NSRange(location: start, length: NSMaxRange(range) - start))
     }
 
     // The keyboard traits set in viewDidLoad are only a hint - the globe key and pasting
@@ -884,7 +764,9 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // thing on a line pulls that line back one level. Between them the text stays
         // laid out as it is typed, so reindenting is only needed on the way in.
         if text == "\n" || text == "}" {
-            if let indented = Self.indentedInsertion(of: text, into: textView, replacing: range),
+            if let indented = Indent.insertion(of: text,
+                                              into: (textView.text ?? "") as NSString,
+                                              replacing: range),
                let editRange = Self.textRange(in: textView, for: indented.range) {
                 textView.replace(editRange, withText: indented.text)
                 return false
@@ -920,7 +802,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // to parse, and owing nothing to whatever the console happens to be showing.
     @objc func doubleTapped() {
         guard program.text.isEmpty else { return }
-        typeIn(Self.reindented(source))
+        typeIn(Indent.reindented(source))
     }
     
     // One way only. This fires for the gutter's own scrolling too, and answering that by
@@ -1071,7 +953,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                 guard let self = self else { return }
                 // Line count is preserved, so the numbers in lateCommands still point at
                 // the lines the user is about to be shown.
-                self.program.text = Self.reindented(scannedText)
+                self.program.text = Indent.reindented(scannedText)
                 self.programChanged()
                 var message = "Let's review the code before running."
                 if let first = lateCommands.first {
@@ -1312,7 +1194,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
                 let docDirURL = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
                 fileURL = docDirURL.appendingPathComponent(fileName)
             }
-            program.text = Self.reindented(try String(contentsOf: fileURL))
+            program.text = Indent.reindented(try String(contentsOf: fileURL))
             programChanged()
         } catch let error as NSError {
             print(error)
