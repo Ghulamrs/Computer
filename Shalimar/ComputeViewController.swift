@@ -843,7 +843,19 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         let head = document.substring(to: range.location)
 
         if text == "\n" {
-            let depth = braceDepth(of: head)
+            var depth = braceDepth(of: head)
+
+            // A } waiting on the other side of the cursor closes the group the cursor is
+            // standing in, so the line it is about to begin belongs one step out - under
+            // the line that opened the group, not under its contents. Without this, the
+            // pair written on one line, `if n < 2 { return (0, n) }`, sends its closing
+            // brace to the depth of the body when it is pushed down, one step right of
+            // where reindented() would put it and one step right of the `if` it closes.
+            let tail = document.substring(from: NSMaxRange(range))
+            if tail.drop(while: { $0 == " " || $0 == "\t" }).first == "}" {
+                depth = max(0, depth - 1)
+            }
+
             guard depth > 0 else { return nil }
             return ("\n" + String(repeating: " ", count: depth * indentWidth), range)
         }
