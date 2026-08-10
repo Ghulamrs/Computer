@@ -49,9 +49,9 @@ fun <> = main() {
   real s[3][3] : {{1.0, 2.0, 3.0},
                   {2.0, 4.0, 6.0},
                   {1.0, 1.0, 1.0}}
-  real tall[3][2] : {{1.0, 2.0},
-                     {3.0, 4.0},
-                     {5.0, 6.0}}
+  // Augmented: b in the last column.
+  real ab[2][3] : {{2.0, 1.0, 1.0},
+                   {1.0, 3.0, 2.0}}
   real d : 0.0
 
   d : invert(m)
@@ -61,12 +61,12 @@ fun <> = main() {
   d : invert(s)
   ? "singular, det" d
 
-  d : invert(tall)
-  ? "not square, det" d
+  d : invert(ab)
+  ? "augmented, det" d
 }
 // expected: inverse, det 9.0000000
 // expected:  1.444444  -1.222222  -0.555556
 // expected: -0.777778   0.888889   0.222222
 // expected:  0.333333  -0.666667   0.333333
 // expected: singular, det 0.0000000
-// expected: not square, det 0.0000000
+// expected: augmented, det 0.0000000
