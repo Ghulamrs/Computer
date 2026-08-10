@@ -7,27 +7,43 @@
 // one, because an array argument is
 // a reference - the same shape as
 // invert.shm.
+//
+// These turn the axes, not the
+// point: R v gives v read off the
+// turned frame. So a yaw of 90 sends
+// a point on x to -y, which is the
+// same thing as the frame's y having
+// swung round to where x was.
+// Right-handed, and the sign says so:
+// the -sin sits in the row directly
+// above the row carrying the 1.0,
+// counting round, so ROX puts it in
+// the last row and ROZ in the middle
+// one. rotations.shm writes the same
+// three matrices as literals - the
+// only difference here is where the
+// answer is put.
 fun <> = ROX(angle: real, R[][]: real) {
   real c : cos(angle)
   real s : sin(angle)
   R[0][0] : 1.0  R[0][1] : 0.0  R[0][2] : 0.0
-  R[1][0] : 0.0  R[1][1] : c    R[1][2] : -s
-  R[2][0] : 0.0  R[2][1] : s    R[2][2] : c
+  R[1][0] : 0.0  R[1][1] : c    R[1][2] : s
+  R[2][0] : 0.0  R[2][1] : -s   R[2][2] : c
 }
 
 fun <> = ROY(angle: real, R[][]: real) {
   real c : cos(angle)
   real s : sin(angle)
-  R[0][0] : c    R[0][1] : 0.0  R[0][2] : s
+  R[0][0] : c    R[0][1] : 0.0  R[0][2] : -s
   R[1][0] : 0.0  R[1][1] : 1.0  R[1][2] : 0.0
-  R[2][0] : -s   R[2][1] : 0.0  R[2][2] : c
+  R[2][0] : s    R[2][1] : 0.0  R[2][2] : c
 }
 
 fun <> = ROZ(angle: real, R[][]: real) {
   real c : cos(angle)
   real s : sin(angle)
-  R[0][0] : c    R[0][1] : -s   R[0][2] : 0.0
-  R[1][0] : s    R[1][1] : c    R[1][2] : 0.0
+  R[0][0] : c    R[0][1] : s    R[0][2] : 0.0
+  R[1][0] : -s   R[1][1] : c    R[1][2] : 0.0
   R[2][0] : 0.0  R[2][1] : 0.0  R[2][2] : 1.0
 }
 
@@ -40,15 +56,15 @@ fun <> = ROZ(angle: real, R[][]: real) {
 fun <> = matmul(a[][]: real,
                 b[][]: real,
                 c[][]: real) {
-  int n : len(a)
-  int m : len(b[0])
-  int k : len(b)
+  int n : a.row
+  int m : b.col
+  int k : b.row
   real sum : 0.0
 
-  for i : 0 to n - 1 {
-    for j : 0 to m - 1 {
+  for i < n {
+    for j < m {
       sum : 0.0
-      for p : 0 to k - 1 {
+      for p < k {
         sum +: a[i][p] * b[p][j]
       }
       c[i][j] : sum
@@ -87,7 +103,9 @@ fun <> = RotMat(roll: real,
 fun <> = main() {
   real R[3][3]
 
-  // Yaw 90: x to y, y to -x.
+  // Yaw 90: the frame's y swings to
+  // where x was, so a point on x now
+  // reads at -y.
   RotMat(rad(0.0), rad(0.0), rad(90.0), R)
   ? "yaw 90"
   ? R
@@ -105,14 +123,14 @@ fun <> = main() {
   ? R
 }
 // expected: yaw 90
-// expected:  0.000000  -1.000000   0.000000
-// expected:  1.000000   0.000000   0.000000
+// expected:  0.000000   1.000000   0.000000
+// expected: -1.000000   0.000000   0.000000
 // expected:  0.000000   0.000000   1.000000
 // expected: roll 90
 // expected:  1.000000   0.000000   0.000000
-// expected:  0.000000   0.000000  -1.000000
-// expected:  0.000000   1.000000   0.000000
+// expected:  0.000000   0.000000   1.000000
+// expected:  0.000000  -1.000000   0.000000
 // expected: roll pitch yaw 90
 // expected:  0.000000   0.000000   1.000000
-// expected:  0.000000   1.000000   0.000000
-// expected: -1.000000   0.000000   0.000000
+// expected: -0.000000  -1.000000   0.000000
+// expected:  1.000000  -0.000000   0.000000

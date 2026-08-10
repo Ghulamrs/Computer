@@ -10,10 +10,23 @@ fun <real> = invert(a[][]: real) {
   real tol : pow(10.0, 0.0 - 30.0)
   real det : 1.0
   real r : 0.0
-  int n : len(a)
-  int nc : len(a[0])
+  int n : a.row
+  int nc : a.col
 
-  for i : 0 to n - 1 {
+  // Only a square block can be
+  // inverted. Equal sides are the
+  // plain case; extra columns are
+  // right-hand sides and ride along.
+  // Fewer columns than rows leaves no
+  // square block to work on, and 0
+  // says so - the same answer a
+  // singular matrix gets, and for the
+  // same reason: no inverse exists.
+  if nc < n {
+    return 0.0
+  }
+
+  for i < n {
     det : det * a[i][i]
 
     // No pivoting, so a collapsed
@@ -29,15 +42,15 @@ fun <real> = invert(a[][]: real) {
     // the storage just read.
     r : 1.0 / a[i][i]
     a[i][i] : 1.0
-    for j : 0 to nc - 1 {
+    for j < nc {
       a[i][j] : r * a[i][j]
     }
 
-    for k : 0 to n - 1 {
+    for k < n {
       if k != i & a[k][i] != 0.0 {
         r : a[k][i]
         a[k][i] : 0.0
-        for j : 0 to nc - 1 {
+        for j < nc {
           a[k][j] -: r * a[i][j]
         }
       }
@@ -74,6 +87,15 @@ fun <> = main() {
   d : invert(ab)
   ? "solved, det" d
   ? ab
+
+  // Three rows, two columns: there is
+  // no square block, so it is refused
+  // before any arithmetic happens.
+  real tall[3][2] : {{1.0, 2.0},
+                     {3.0, 4.0},
+                     {5.0, 6.0}}
+  d : invert(tall)
+  ? "not square, det" d
 }
 // expected: inverse, det 9.0000000
 // expected:  1.444444  -1.222222  -0.555556
@@ -83,3 +105,4 @@ fun <> = main() {
 // expected: solved, det 5.0000000
 // expected:  0.600000  -0.200000   0.200000
 // expected: -0.200000   0.400000   0.600000
+// expected: not square, det 0.0000000

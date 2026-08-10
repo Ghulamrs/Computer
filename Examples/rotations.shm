@@ -7,6 +7,14 @@
 // call. This one reads closer to
 // the matrix as written on paper.
 //
+// Right-handed, and the sign shows
+// it: the -sin sits in the row
+// directly above the row carrying
+// the 1.0, counting round, so it
+// lands in the last row here for X
+// and in the middle one for Z.
+// rotmat.shm builds the same three.
+//
 // pi/4, not a right angle, on
 // purpose: at pi/2 every entry is 0
 // or 1 whether the trig ran or not.
