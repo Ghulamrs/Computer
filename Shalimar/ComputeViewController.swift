@@ -1287,7 +1287,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // The name, then when it was saved. Two lines, written and replaced as a pair, so a
     // second save updates the header rather than stacking another one above it.
     private func writeNameHeader(_ fileName: String) {
-        var lines = (program.text ?? "").components(separatedBy: "\n")
+        let lines = (program.text ?? "").components(separatedBy: "\n")
         // How much of what is already there is this header's own, and so may be replaced:
         // the name line, and the stamp under it if that is there too. Everything below is
         // the user's and is left where it is.
@@ -1295,19 +1295,54 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         if let first = lines.first, Self.isNameHeader(first) { existing = 1 }
         if lines.count > existing, Self.isTimeStamp(lines[existing]) { existing += 1 }
 
-        lines.replaceSubrange(0..<existing, with: ["// " + fileName, Self.timeStamp()])
-        program.text = lines.joined(separator: "\n")
-        programChanged()
+        replaceLeadingLines(existing, with: ["// " + fileName, Self.timeStamp()])
     }
 
     // Re-saving a file that already carries a header: the time changes, the name does not.
     private func refreshSavedStamp() {
-        var lines = (program.text ?? "").components(separatedBy: "\n")
+        let lines = (program.text ?? "").components(separatedBy: "\n")
         guard let first = lines.first, Self.isNameHeader(first),
               lines.count > 1, Self.isTimeStamp(lines[1]) else { return }
-        lines[1] = Self.timeStamp()
+        replaceLeadingLines(2, with: [first, Self.timeStamp()])
+    }
+
+    // Both callers above swap whole lines at the top of the program and leave everything
+    // under them alone, so both owe the reader the same thing: the page as they left it.
+    //
+    // Assigning to `text` puts the caret at the end of the document, and the pane follows
+    // the caret - so a save made from line 27 of a long program landed the reader on the
+    // last line, at the right-hand edge of the page, with nothing on screen they had been
+    // looking at. Saving changes the header; it is not a request to go anywhere. The
+    // reading position and the caret are read before the swap and put back after it.
+    private func replaceLeadingLines(_ count: Int, with header: [String]) {
+        var lines = (program.text ?? "").components(separatedBy: "\n")
+        let reading = editorPane.contentOffset
+        let caret = program.selectedRange
+        let was = Self.prefixLength(of: lines.prefix(count))
+        let now = Self.prefixLength(of: header[...])
+
+        lines.replaceSubrange(0..<count, with: header)
         program.text = lines.joined(separator: "\n")
         programChanged()
+
+        // A caret below the header stays on the character it was on, however many
+        // characters the header gained or lost above it. One inside the header is sitting
+        // in text this has just rewritten and has no character to keep, so it goes to the
+        // first line under it.
+        let length = (program.text as NSString).length
+        let moved = caret.location >= was ? caret.location + now - was : now
+        program.selectedRange = NSRange(location: min(moved, length), length: 0)
+
+        // Only after the layout pass: the offset is put back against the wrapping and the
+        // content height the new text has, not the ones it had a moment ago.
+        view.layoutIfNeeded()
+        keepEditorAt(reading)
+    }
+
+    // How far into the text a run of whole lines reaches, the newline that ends each of
+    // them counted. UTF-16, because that is the unit an NSRange location is measured in.
+    private static func prefixLength(of lines: ArraySlice<String>) -> Int {
+        lines.reduce(0) { $0 + $1.utf16.count + 1 }
     }
 
     // "March 23, 2026. 7:00 AM" - written out, the way the date at the foot of the
