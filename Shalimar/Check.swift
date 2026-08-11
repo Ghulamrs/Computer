@@ -581,7 +581,7 @@ final class Checker {
             // into a fresh string sized to the result.
             if lhs == .array(.char) && rhs == .array(.char) {
                 switch node.op {
-                case .equal, .notEqual, .less, .greater: return .int
+                case .equal, .notEqual, .less, .greater, .lessEqual, .greaterEqual: return .int
                 case .add: return .array(.char)
                 default:
                     error("'\(node.op.rawValue)' does not apply to strings", line)
@@ -613,7 +613,7 @@ final class Checker {
             }
 
             switch node.op {
-            case .equal, .notEqual, .less, .greater, .and, .or: return .int
+            case .equal, .notEqual, .less, .greater, .lessEqual, .greaterEqual, .and, .or: return .int
             default: return widest(lhs, rhs)
             }
 
@@ -668,7 +668,7 @@ final class Checker {
         switch expr {
         case let node as BinaryOpNode:
             switch node.op {
-            case .equal, .notEqual, .less, .greater, .and, .or:
+            case .equal, .notEqual, .less, .greater, .lessEqual, .greaterEqual, .and, .or:
                 return ConvertNode(expr: rewrite(node, line: line), to: target)
             default:
                 return BinaryOpNode(op: node.op,

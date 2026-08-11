@@ -655,6 +655,8 @@ final class Interpreter {
             case .notEqual: return truth(a != b)
             case .less:     return truth(a.lexicographicallyPrecedes(b))
             case .greater:  return truth(b.lexicographicallyPrecedes(a))
+            case .lessEqual:    return truth(!b.lexicographicallyPrecedes(a))
+            case .greaterEqual: return truth(!a.lexicographicallyPrecedes(b))
             default:
                 throw RuntimeError(message: "'\(op.rawValue)' does not apply to strings", line: line)
             }
@@ -680,6 +682,8 @@ final class Interpreter {
             case .notEqual: return truth(a != b)
             case .less:     return truth(a < b)
             case .greater:  return truth(a > b)
+            case .lessEqual:    return truth(a <= b)
+            case .greaterEqual: return truth(a >= b)
             case .and, .or: break
             }
         }
@@ -697,6 +701,8 @@ final class Interpreter {
         case .notEqual: return truth(a != b)
         case .less:     return truth(a < b)
         case .greater:  return truth(a > b)
+        case .lessEqual:    return truth(a <= b)
+        case .greaterEqual: return truth(a >= b)
         case .and, .or: return truth(false)
         }
     }

@@ -210,6 +210,7 @@ was not wrong.
 | `:` | assignment (`x : expr`) / separator (`for i : 0 to 10`, parameter types, multi-assign) |
 | `=` | **overloaded**, see below |
 | `!=` | not-equal |
+| `<=` `>=` | less-or-equal, greater-or-equal |
 | `<` `>` | **overloaded**, see below |
 | `&` `\|` | logical and / or (operate on truthiness, [§5.5](#55-truthiness)) |
 | `+:` `-:` | compound assign (`x +: 1` ⇔ `x : x + 1`); `+:` also appends to a string |
@@ -251,6 +252,14 @@ The parser disambiguates `<` by lookahead (`looksLikeMultiAssignHeader`): wherev
 statement or continue an expression, it peeks for the exact shape `Identifier {"," Identifier} ">"
 ":"` before committing. The `for` case needs no lookahead — a `<` in that position was a parse error
 in every earlier version, so nothing legal changed meaning.
+
+**`>=` and the function header.** Because the lexer is context-free and matches the longest operator
+first, `fun <>= main()` — the closing `>` of the output list written hard against the separator `=` —
+arrives as a single `>=` token. That spelling parsed before `>=` was an operator, so `parseDefinition`
+accepts a `>=` there and reads it as the `>` plus the `=`. The alternative was to require the space
+and silently break programs over an operator they do not use. Note that this is a symptom, not a
+design: the real cause is `=` doing duty as a separator at all ([§2.5](#25-operators-and-punctuation),
+overload 3), and it would not arise if the header used `:` like every other separator in the language.
 
 ---
 
@@ -303,7 +312,7 @@ PrintItem      ::= "prec" "(" Expression ")" | Expression
 Expression     ::= OrExpr
 OrExpr         ::= AndExpr { "|" AndExpr }
 AndExpr        ::= CompareExpr { "&" CompareExpr }
-CompareExpr    ::= AddExpr { ("=" | "!=" | "<" | ">") AddExpr }
+CompareExpr    ::= AddExpr { ("=" | "!=" | "<" | ">" | "<=" | ">=") AddExpr }
 AddExpr        ::= MulExpr { ("+" | "-") MulExpr }
 MulExpr        ::= PowExpr { ("*" | "/" | "%") PowExpr }
 PowExpr        ::= Postfix [ "^" PowExpr ]
@@ -328,7 +337,7 @@ Loosest-binding to tightest:
 |---|---|---|
 | 1 (loosest) | `\|` | left |
 | 2 | `&` | left |
-| 3 | `=` `!=` `<` `>` | left |
+| 3 | `=` `!=` `<` `>` `<=` `>=` | left |
 | 4 | `+` `-` | left |
 | 5 | `*` `/` `%` | left |
 | 6 | `^` | **right** |
@@ -874,12 +883,12 @@ char a[20] : "alice"
 char b[128] : "bob"
 ```
 
-Five operators work on two strings:
+Seven operators work on two strings:
 
 | | |
 |---|---|
 | `=` `!=` | content equality |
-| `<` `>` | lexicographic order |
+| `<` `>` `<=` `>=` | lexicographic order |
 | `+` | join, producing a new string sized to the result |
 
 and `+:` appends, which is how one is built in a loop.

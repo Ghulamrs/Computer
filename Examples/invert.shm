@@ -16,7 +16,7 @@ fun <real> = invert(a[][]: real) {
 
     // A collapsed pivot is pinned to
     // tol; an exact zero is singular.
-    if abs(det) < tol | abs(det) = tol {
+    if abs(det) <= tol {
       if a[i][i] = 0.0 { return det }
       det : tol
     }

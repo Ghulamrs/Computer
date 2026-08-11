@@ -96,7 +96,13 @@ let tokenList: [(String, TokenGenerator)] = [
 
     ("\\+:", { _ in .PlusAssign }),
     ("-:", { _ in .MinusAssign }),
+    // The three two-character comparisons must all stay above the single-character
+    // operator class at the foot of this list. Patterns are tried in order and the first
+    // match is consumed, so were '[-+*/%^=<>&|]' reached first it would take the '<' of
+    // '<=' and leave the '=' behind to be read as a second, equality comparison.
     ("!=", { _ in .Operator("!=") }),
+    ("<=", { _ in .Operator("<=") }),
+    (">=", { _ in .Operator(">=") }),
     ("\\?\\?", { _ in .PrintInline }),
     ("\\?", { _ in .PrintLine }),
     ("!", { _ in throw LexIssue.bangIsNotACommand }),

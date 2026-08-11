@@ -366,7 +366,17 @@ t : a
 a : b
 b : t
 ? a b }'
-# Only those five operators, only on two strings - everything else stays refused.
+t "ordering with <=" "ann first" 'fun <> = main() { char a[20] : "ann"
+if a <= "anna" {
+? "ann first" } }'
+t "<= on equal strings" "same" 'fun <> = main() { char a[20] : "bob"
+char b[128] : "bob"
+if a <= b {
+? "same" } }'
+t ">= on equal strings" "same" 'fun <> = main() { char a[20] : "bob"
+if a >= "bob" {
+? "same" } }'
+# Only those seven operators, only on two strings - everything else stays refused.
 t "subtraction is refused" "does not apply to strings" 'fun <> = main() { char a[8] : "ab"
 ? a - "b" }'
 t "-: on a string is refused" "'-:' does not apply to strings" 'fun <> = main() { char a[8] : "ab"
@@ -378,6 +388,70 @@ t "numeric arrays still refused" "needs scalars, got real[] and real[]" 'fun <> 
 # A list of names is still not expressible: char is one-dimensional by design.
 t "no array of strings" "strings are 1-D" 'fun <> = main() { char names[3][20]
 ? 1 }'
+
+# --------------------------------------------------------- 2.5 <= and >=
+# The two comparisons the language went without. Before they existed the only spelling
+# was 'a < b | a = b', which evaluates the left side twice, because '&' and '|' take two
+# finished values and do not short-circuit. Examples/invert.shm carried the one instance
+# of it in the whole corpus, and is now the '<=' it always meant.
+t "int <= is true when equal" "yes" 'fun <> = main() { int a : 3
+if a <= 3 {
+? "yes" } }'
+t "int <= is true when less" "yes" 'fun <> = main() { int a : 2
+if a <= 3 {
+? "yes" } }'
+t "int <= is false when greater" "no" 'fun <> = main() { int a : 4
+if a <= 3 {
+? "yes" }
+if a > 3 {
+? "no" } }'
+t "int >= is true when equal" "yes" 'fun <> = main() { int a : 3
+if a >= 3 {
+? "yes" } }'
+t "int >= is false when less" "no" 'fun <> = main() { int a : 2
+if a >= 3 {
+? "yes" }
+if a < 3 {
+? "no" } }'
+t "real <= at the boundary" "yes" 'fun <> = main() { real x : 1.5
+if x <= 1.5 {
+? "yes" } }'
+t "real >= mixes with int" "yes" 'fun <> = main() { real x : 3.0
+if x >= 3 {
+? "yes" } }'
+# The comparison is a value like any other, and its type is int.
+t "<= yields an int" "1" 'fun <> = main() { int c : 2 <= 3
+? c }'
+t ">= yields an int" "0" 'fun <> = main() { int c : 2 >= 3
+? c }'
+# Precedence 30, the same as the other four, so it binds tighter than '&' and '|' and
+# needs no parentheses - this is what let invert.shm write its old form unbracketed.
+t "<= binds tighter than |" "yes" 'fun <> = main() { int a : 5
+if a <= 3 | a >= 5 {
+? "yes" } }'
+t "<= binds tighter than &" "yes" 'fun <> = main() { int a : 4
+if a >= 3 & a <= 5 {
+? "yes" } }'
+# Both characters must be adjacent: the token is '<=', not '<' and '=' with a gap.
+t "a gap is not the operator" "Unexpected '='" 'fun <> = main() { int a : 3
+if a < = 3 {
+? "yes" } }'
+t "no spaces needed either" "yes" 'fun <> = main() { int a : 3
+if a<=3 {
+? "yes" } }'
+# The header hazard '>=' introduced. 'fun <>= main()' parsed before the operator existed,
+# and the lexer now hands that '>=' back as one token, so parseDefinition takes it as the
+# closing '>' plus the separator '='. Without this the operator would silently break
+# programs that never use it.
+t "no-space empty output list" "ok" 'fun <>= main() {
+? "ok" }'
+t "no-space typed output list" "7" 'fun <int>= f() { return 7 }
+fun <> = main() {
+? f() }'
+t "no-space multi output list" "1 2" 'fun <int,int>= f() { return (1,2) }
+fun <> = main() {
+<a,b> : f()
+? a b }'
 
 # -------------------------------------------------------- 2.2 lexer / ASCII rule
 t "underscore identifier" "7" 'fun <> = main() { _foo : 7

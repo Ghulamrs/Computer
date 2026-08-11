@@ -286,17 +286,31 @@ class Parser {
         // 'fun <...> = name(...)'. It used to be optional, so 'fun = main()' parsed and
         // ran - a second spelling of the header that the grammar never described and
         // nothing else in the language would have recognised.
+        // 'fun <>= main()' and 'fun <int>= f()' are legal, and were legal before '>='
+        // became a token: written without the space the lexer now hands back a single
+        // '>=', because it cannot see that this '>' closes a list rather than compares.
+        // Accepting it here as the closing '>' plus the separator '=' keeps every header
+        // that parsed before parsing now - the alternative was to make the space
+        // mandatory, silently breaking programs for the sake of an operator they do
+        // not use.
         var outputs = [ShalimarType]()
+        var separatorTaken = false
         try consume(.Operator("<"))
-        if !match(.Operator(">")) {
+        if match(.Operator(">=")) {
+            separatorTaken = true
+        } else if !match(.Operator(">")) {
             while true {
                 outputs.append(try parseScalarType())
                 if match(.Comma) { continue }
                 break
             }
-            try consume(.Operator(">"))
+            if match(.Operator(">=")) {
+                separatorTaken = true
+            } else {
+                try consume(.Operator(">"))
+            }
         }
-        try consume(.Operator("="))
+        if !separatorTaken { try consume(.Operator("=")) }
 
         let name = try readIdentifier()
         let inputs = try parseParensList(read: parseParameter)
@@ -694,7 +708,7 @@ class Parser {
     let operatorPrecedence: [String: Int] = [
         "|": 10,
         "&": 20,
-        "=": 30, "!=": 30, "<": 30, ">": 30,
+        "=": 30, "!=": 30, "<": 30, ">": 30, "<=": 30, ">=": 30,
         "+": 40, "-": 40,
         "*": 50, "/": 50, "%": 50,
         "^": 60
