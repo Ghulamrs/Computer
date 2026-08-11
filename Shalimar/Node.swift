@@ -188,6 +188,7 @@ public struct BinaryOpNode: ExprNode {
     public enum Op: String {
         case add = "+", subtract = "-", multiply = "*", divide = "/", modulus = "%", power = "^"
         case equal = "=", notEqual = "!=", less = "<", greater = ">"
+        case lessEqual = "<=", greaterEqual = ">="
         case and = "&", or = "|"
     }
     public let op: Op

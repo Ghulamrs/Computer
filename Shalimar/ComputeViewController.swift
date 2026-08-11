@@ -73,13 +73,6 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         lineview.textContainer.lineFragmentPadding = 0
 
         program.delegate = self
-        // A short program has nothing to scroll - no bar, no travel - and a view that
-        // cannot move under the finger reads as a dead one. The bounce is the answer the
-        // page gives back: alwaysBounceVertical keeps it for text shorter than the frame,
-        // which is the case where UIScrollView would otherwise ignore the drag entirely.
-        // The gutter follows the same offset, so the numbers spring with their lines.
-        program.bounces = true
-        program.alwaysBounceVertical = true
         // Shalimar source is ASCII and its identifiers are case-sensitive, so iOS's text
         // "helpers" all corrupt a program invisibly: smart quotes replace the " the lexer
         // scans for, smart dashes fuse "--" into an en-dash, and sentence capitalization
@@ -113,7 +106,21 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         console.isScrollEnabled = true
         console.isEditable = false
 
+        // Before the console handle, which anchors itself to the foot of the editor and
+        // needs the pane to exist to anchor to.
+        installEditorPane()
         installConsoleHandle()
+
+        // The keyboard covers the bottom of the screen, and the editor is what is under it.
+        // willChangeFrame rather than willShow: it is the one that also fires for a hardware
+        // keyboard connecting, a floating keyboard being dragged, and the height changing
+        // under a predictive bar - all of which move the floor the text has to clear.
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardChanged),
+                                               name: UIResponder.keyboardWillChangeFrameNotification,
+                                               object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(keyboardHidden),
+                                               name: UIResponder.keyboardWillHideNotification,
+                                               object: nil)
 
         // The storyboard leaves 20pt between the console and the safe area, which was
         // nothing but white. A line fits there exactly, and it is the one place in the
@@ -223,15 +230,179 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         navigationItem.titleView = runButton
     }
 
-    // Where a line wraps depends on the editor's width, so a rotation or a split-view
+    // Where a line wraps depends on the page's width, so a rotation or a split-view
     // resize changes the row count without changing the text. The guard inside leaves
     // this cheap when nothing moved.
     override func viewDidLayoutSubviews() {
         super.viewDidLayoutSubviews()
+        // First: the two below both read the layout, and the layout is not settled until
+        // the page knows how wide it is.
+        updateCanvasWidth()
         refreshLineNumbers()
         // Same reason as the numbers: a resize rewraps the text, and a strip cut to the
         // old wrapping would sit over the wrong rows.
         layoutErrorStrips()
+    }
+
+    // MARK: - The page and the window onto it
+
+    // These used to be one view, and could not be.
+    //
+    // A UITextView will not scroll sideways. It draws its glyphs into a private subview
+    // that it keeps at its own bounds, so text laid out past that edge is not merely
+    // clipped by the window - it is never drawn at all, and scrolling right revealed blank
+    // page with the end of the line nowhere on it. Widening the text container stops the
+    // wrapping and assigning contentSize buys the travel, but neither reaches the view that
+    // does the drawing.
+    //
+    // So the text view stops being the window. It becomes a page of a fixed width that
+    // scrolls nothing itself - which is what makes it size to its text, drawing subview and
+    // all - and this scroll view is the window moved across it.
+    private let editorPane = UIScrollView()
+
+    // The page is 80 columns wide whatever the device is.
+    //
+    // A width taken from the screen makes the same program a different shape on every phone
+    // and in every split-view size, which is the thing that made a wrapped line untrustworthy
+    // to read. A column count is the measure programs are actually written to, so the wrap
+    // point becomes a property of the page rather than of the hardware. Anything past column
+    // 80 still wraps rather than running on: the alternative is text that exists but cannot
+    // be reached, which is the failure this whole change exists to remove.
+    private static let canvasColumns = 80
+    private var canvasWidth: NSLayoutConstraint?
+
+    private func installEditorPane() {
+        // Everything the storyboard said about the editor describes the window onto it now,
+        // so those constraints come off the text view and go back on the pane. Collected
+        // before deactivating: taking them out mutates the array being walked.
+        let inherited = view.constraints.filter { $0.firstItem === program || $0.secondItem === program }
+        NSLayoutConstraint.deactivate(inherited)
+
+        editorPane.translatesAutoresizingMaskIntoConstraints = false
+        // The mint belongs to the page, but the pane shows through wherever the page is
+        // shorter than the window, so it carries the same colour rather than a white gap.
+        editorPane.backgroundColor = program.backgroundColor
+        editorPane.delegate = self
+        // A short program has nothing to scroll - no bar, no travel - and a view that cannot
+        // move under the finger reads as a dead one. The bounce is the answer the page gives
+        // back: alwaysBounceVertical keeps it for text shorter than the frame, which is the
+        // case where UIScrollView would otherwise ignore the drag entirely.
+        editorPane.bounces = true
+        editorPane.alwaysBounceVertical = true
+        // Sideways there is no such answer to give: a program narrower than the window would
+        // bounce against travel it does not have.
+        editorPane.alwaysBounceHorizontal = false
+        // A drag commits to one axis. Without the lock, following a long line to the right
+        // drifts down at the same time, and the line arrived at is not the line set out on.
+        editorPane.isDirectionalLockEnabled = true
+        editorPane.showsHorizontalScrollIndicator = true
+        view.addSubview(editorPane)
+
+        program.translatesAutoresizingMaskIntoConstraints = false
+        // The line that does the work: a text view that scrolls nothing sizes itself to its
+        // text, and the private drawing subview goes with it. Every column of the page is
+        // then actually painted, which is what gives the pane something real to move over.
+        program.isScrollEnabled = false
+        editorPane.addSubview(program)
+
+        let content = editorPane.contentLayoutGuide
+        let window = editorPane.frameLayoutGuide
+        let width = program.widthAnchor.constraint(equalToConstant: 0)
+        canvasWidth = width
+
+        NSLayoutConstraint.activate([
+            // The pane, standing exactly where the text view used to stand.
+            editorPane.leadingAnchor.constraint(equalTo: lineview.trailingAnchor, constant: 8),
+            editorPane.topAnchor.constraint(equalTo: view.safeAreaLayoutGuide.topAnchor, constant: 8),
+            view.safeAreaLayoutGuide.trailingAnchor.constraint(equalTo: editorPane.trailingAnchor,
+                                                               constant: 16),
+            // The gutter measured itself against the text view and measures itself against
+            // the window now - which is the height it always meant. The numbers are a column
+            // beside the visible page, not beside the whole program.
+            lineview.heightAnchor.constraint(equalTo: editorPane.heightAnchor),
+
+            // The page inside it. Pinned to the content guide on all four sides, so the page
+            // is what the pane scrolls over.
+            program.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            program.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            program.topAnchor.constraint(equalTo: content.topAnchor),
+            program.bottomAnchor.constraint(equalTo: content.bottomAnchor),
+            width,
+            // A short program still fills the window, so the mint reaches the foot of the
+            // pane instead of stopping under the last line.
+            program.heightAnchor.constraint(greaterThanOrEqualTo: window.heightAnchor)
+        ])
+
+        // 'consoleShare' was the editor's two-thirds of the screen, said about the text view.
+        // The console pane toggles it open and shut, so the replacement has to be the one
+        // this controller holds rather than the storyboard's, which went inactive above.
+        consoleShare = editorPane.heightAnchor.constraint(equalTo: console.heightAnchor,
+                                                          multiplier: 2)
+        consoleShare?.isActive = true
+    }
+
+    // 80 columns, or the window's width where that is wider - on an iPad a page narrower
+    // than the window would leave the mint stopping short of the right edge with white
+    // beyond it. Monospaced, and the colouring pass established that the font measures
+    // identical from medium to bold, so one advance times the column count is the whole
+    // calculation and no layout pass is needed to find it.
+    private func updateCanvasWidth() {
+        guard let width = canvasWidth else { return }
+        let font = program.font ?? UIFont.monospacedSystemFont(ofSize: 14, weight: .medium)
+        let advance = ("0" as NSString).size(withAttributes: [.font: font]).width
+        let padding = program.textContainer.lineFragmentPadding * 2
+        let inset = program.textContainerInset.left + program.textContainerInset.right
+        let page = CGFloat(Self.canvasColumns) * advance + padding + inset
+
+        let wanted = max(page, editorPane.bounds.width)
+        // Assigning re-enters layout, and this is called from viewDidLayoutSubviews. The
+        // guard is what stops that being a loop.
+        guard abs(width.constant - wanted) > 0.5 else { return }
+        width.constant = wanted
+        // A constant assigned here lands on the next layout pass, but the gutter and the
+        // error strips both read the layout in this one - so they would number and cover
+        // the old wrapping, one pass behind the page they describe. That is what put a
+        // blank continuation row under a line that no longer wraps. Settling the pane now
+        // means everything below reads the width just set.
+        editorPane.layoutIfNeeded()
+    }
+
+    // MARK: - Keyboard
+
+    // The keyboard covers the foot of the screen and the editor is what is under it.
+    //
+    // The page is not shrunk to fit above it: the page width is the wrap column, and moving
+    // it would re-wrap every line the moment the keyboard appeared. Instead the pane is
+    // given bottom inset the height of the overlap. The text can then be scrolled up clear
+    // of the keyboard, and what ends up behind the keys is empty space past the end of the
+    // program rather than the line being typed.
+    @objc private func keyboardChanged(_ note: Notification) {
+        guard let end = note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else { return }
+        // Converted from screen coordinates, which is what the notification carries and what
+        // a split view or a floating keyboard makes different from the view's own.
+        let keyboard = view.convert(end, from: nil)
+        let overlap = max(0, editorPane.frame.maxY - keyboard.minY)
+        editorPane.contentInset.bottom = overlap
+        editorPane.verticalScrollIndicatorInsets.bottom = overlap
+        scrollCaretIntoView()
+    }
+
+    @objc private func keyboardHidden(_ note: Notification) {
+        editorPane.contentInset.bottom = 0
+        editorPane.verticalScrollIndicatorInsets.bottom = 0
+    }
+
+    // A text view that scrolls itself keeps its own caret in sight for free. This one does
+    // not scroll, so the pane has to be told - otherwise typing at the foot of a program
+    // walks the caret down behind the keyboard and the line being written cannot be seen.
+    private func scrollCaretIntoView() {
+        guard program.isFirstResponder, let range = program.selectedTextRange else { return }
+        let caret = program.caretRect(for: range.end)
+        guard caret.height > 0, !caret.isInfinite, !caret.isNull else { return }
+        // Widened before it is shown: a caret scrolled to flush against the edge sits with
+        // the character it is about to write already off it.
+        editorPane.scrollRectToVisible(program.convert(caret, to: editorPane)
+                                        .insetBy(dx: -12, dy: -8), animated: true)
     }
 
     // Not viewDidLoad: the typing has to be watched to be worth doing, and at load the
@@ -338,8 +509,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // The storyboard puts 8pt of nothing between the editor and the console. The bar
         // takes that gap over and 16pt besides, which is the whole cost of this in editor
         // height - about one line - against the third that one tap on it returns.
+        // Both of the storyboard's own constraints here were said about the text view, and
+        // installEditorPane has already taken them off it - 'consoleShare' replaced by one
+        // against the pane, 'consoleGap' simply gone, which is what this line wanted anyway.
         view.constraints.first { $0.identifier == "consoleGap" }?.isActive = false
-        consoleShare = view.constraints.first { $0.identifier == "consoleShare" }
 
         consoleHandle.translatesAutoresizingMaskIntoConstraints = false
         consoleHandle.isAccessibilityElement = true
@@ -358,7 +531,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
         view.addSubview(consoleHandle)
         NSLayoutConstraint.activate([
-            consoleHandle.topAnchor.constraint(equalTo: program.bottomAnchor),
+            consoleHandle.topAnchor.constraint(equalTo: editorPane.bottomAnchor),
             consoleHandle.bottomAnchor.constraint(equalTo: console.topAnchor),
             consoleHandle.heightAnchor.constraint(equalToConstant: 24),
             // The console's own margins, not the editor's: the bar belongs to the pane it
@@ -405,7 +578,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // a reader who was at line 1 down to line 54. Taking the room back is meant to show
         // more of the same page, not a different one. Read the offset before the pane moves
         // and put it back after.
-        let reading = program.contentOffset
+        let reading = editorPane.contentOffset
 
         // The editor is what moves, and it should look pushed rather than cut: a spring
         // damped just short of a bounce, over about the length of a sheet dismissal. The
@@ -428,10 +601,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // was legal in a taller frame can be past the end of a shorter one - which would leave
     // it parked below the last line with nothing to look at.
     private func keepEditorAt(_ offset: CGPoint) {
-        let inset = program.adjustedContentInset
+        let inset = editorPane.adjustedContentInset
         let lowest = max(-inset.top,
-                         program.contentSize.height + inset.bottom - program.bounds.height)
-        program.contentOffset = CGPoint(x: offset.x, y: min(offset.y, lowest))
+                         editorPane.contentSize.height + inset.bottom - editorPane.bounds.height)
+        editorPane.contentOffset = CGPoint(x: offset.x, y: min(offset.y, lowest))
     }
 
     // VoiceOver cannot see that the pane went away, so the bar has to say which of the two
@@ -496,6 +669,8 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     func textViewDidChange(_ textView: UITextView) {
         guard textView === program else { return }
         programChanged()
+        // The page grows a line at a time and the pane does not follow on its own.
+        scrollCaretIntoView()
     }
 
     // Everything the editor owes its text after that text moves. Both halves read the
@@ -554,7 +729,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
             let strip = UIView(frame: CGRect(x: 0,
                                              y: box.minY + program.textContainerInset.top,
-                                             width: max(program.bounds.width, program.contentSize.width),
+                                             // The page's full width, not the window's: a
+                                             // strip cut to what is on screen would end
+                                             // mid-row the moment the page was scrolled.
+                                             width: program.bounds.width,
                                              height: box.height))
             strip.backgroundColor = Self.errorStripColour
             strip.isUserInteractionEnabled = false
@@ -740,8 +918,9 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         guard numbers != lineview.text else { return }
         lineview.text = numbers
         // Replacing the text resets the gutter's scroll position, so put it back in step
-        // with the editor rather than waiting for the next scroll to do it.
-        lineview.contentOffset = program.contentOffset
+        // with the editor rather than waiting for the next scroll to do it. Vertically
+        // only, for the reason in scrollViewDidScroll.
+        lineview.contentOffset = CGPoint(x: 0, y: editorPane.contentOffset.y)
     }
 
     // NSRange offsets are UTF-16, so the document is measured as NSString throughout
@@ -760,6 +939,17 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard textView === program else { return true }
 
+        // Two spaces in a row are a period to the keyboard and a lexing error here, so the
+        // spaces that were actually typed go in instead. First, because the substitution
+        // arrives looking like ordinary text and every branch below would pass it through.
+        if let spaces = Indent.spacesForSentencePeriod(in: (textView.text ?? "") as NSString,
+                                                       replacing: range,
+                                                       with: text),
+           let editRange = Self.textRange(in: textView, for: range) {
+            textView.replace(editRange, withText: spaces)
+            return false
+        }
+
         // Enter carries the brace depth onto the new line, and a } typed as the first
         // thing on a line pulls that line back one level. Between them the text stays
         // laid out as it is typed, so reindenting is only needed on the way in.
@@ -775,6 +965,19 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         }
 
         let normalized = Self.normalizedToASCII(text)
+
+        // A paste is laid out at the level it lands in rather than keeping the indentation
+        // it was copied with - six columns of it, when it comes from the reference. It is
+        // normalized first, so what gets laid out is the ASCII that will actually be
+        // inserted and not a lookalike that would move the braces this counts.
+        if let laidOut = Indent.paste(of: normalized,
+                                      into: (textView.text ?? "") as NSString,
+                                      replacing: range),
+           let editRange = Self.textRange(in: textView, for: laidOut.range) {
+            textView.replace(editRange, withText: laidOut.text)
+            return false
+        }
+
         guard normalized != text else { return true }
 
         // Insert the cleaned text and reject the original edit. This cannot recurse:
@@ -807,9 +1010,13 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     
     // One way only. This fires for the gutter's own scrolling too, and answering that by
     // reassigning the gutter's offset is a loop that reports as a twitch on screen.
+    // Vertically only. The pane moves on both axes, but the gutter is one column of numbers
+    // with no width to spare: handed the pane's x as well, the numbers would slide out of
+    // their own view as soon as a long line was followed to the right, and the code would be
+    // left counting against a blank strip.
     func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        guard scrollView === program else { return }
-        lineview.contentOffset = program.contentOffset
+        guard scrollView === editorPane else { return }
+        lineview.contentOffset = CGPoint(x: 0, y: editorPane.contentOffset.y)
     }
     
     @IBAction func ComputeTapped(_ sender: Any) {
@@ -1104,7 +1311,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // The name, then when it was saved. Two lines, written and replaced as a pair, so a
     // second save updates the header rather than stacking another one above it.
     private func writeNameHeader(_ fileName: String) {
-        var lines = (program.text ?? "").components(separatedBy: "\n")
+        let lines = (program.text ?? "").components(separatedBy: "\n")
         // How much of what is already there is this header's own, and so may be replaced:
         // the name line, and the stamp under it if that is there too. Everything below is
         // the user's and is left where it is.
@@ -1112,19 +1319,54 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         if let first = lines.first, Self.isNameHeader(first) { existing = 1 }
         if lines.count > existing, Self.isTimeStamp(lines[existing]) { existing += 1 }
 
-        lines.replaceSubrange(0..<existing, with: ["// " + fileName, Self.timeStamp()])
-        program.text = lines.joined(separator: "\n")
-        programChanged()
+        replaceLeadingLines(existing, with: ["// " + fileName, Self.timeStamp()])
     }
 
     // Re-saving a file that already carries a header: the time changes, the name does not.
     private func refreshSavedStamp() {
-        var lines = (program.text ?? "").components(separatedBy: "\n")
+        let lines = (program.text ?? "").components(separatedBy: "\n")
         guard let first = lines.first, Self.isNameHeader(first),
               lines.count > 1, Self.isTimeStamp(lines[1]) else { return }
-        lines[1] = Self.timeStamp()
+        replaceLeadingLines(2, with: [first, Self.timeStamp()])
+    }
+
+    // Both callers above swap whole lines at the top of the program and leave everything
+    // under them alone, so both owe the reader the same thing: the page as they left it.
+    //
+    // Assigning to `text` puts the caret at the end of the document, and the pane follows
+    // the caret - so a save made from line 27 of a long program landed the reader on the
+    // last line, at the right-hand edge of the page, with nothing on screen they had been
+    // looking at. Saving changes the header; it is not a request to go anywhere. The
+    // reading position and the caret are read before the swap and put back after it.
+    private func replaceLeadingLines(_ count: Int, with header: [String]) {
+        var lines = (program.text ?? "").components(separatedBy: "\n")
+        let reading = editorPane.contentOffset
+        let caret = program.selectedRange
+        let was = Self.prefixLength(of: lines.prefix(count))
+        let now = Self.prefixLength(of: header[...])
+
+        lines.replaceSubrange(0..<count, with: header)
         program.text = lines.joined(separator: "\n")
         programChanged()
+
+        // A caret below the header stays on the character it was on, however many
+        // characters the header gained or lost above it. One inside the header is sitting
+        // in text this has just rewritten and has no character to keep, so it goes to the
+        // first line under it.
+        let length = (program.text as NSString).length
+        let moved = caret.location >= was ? caret.location + now - was : now
+        program.selectedRange = NSRange(location: min(moved, length), length: 0)
+
+        // Only after the layout pass: the offset is put back against the wrapping and the
+        // content height the new text has, not the ones it had a moment ago.
+        view.layoutIfNeeded()
+        keepEditorAt(reading)
+    }
+
+    // How far into the text a run of whole lines reaches, the newline that ends each of
+    // them counted. UTF-16, because that is the unit an NSRange location is measured in.
+    private static func prefixLength(of lines: ArraySlice<String>) -> Int {
+        lines.reduce(0) { $0 + $1.utf16.count + 1 }
     }
 
     // "March 23, 2026. 7:00 AM" - written out, the way the date at the foot of the

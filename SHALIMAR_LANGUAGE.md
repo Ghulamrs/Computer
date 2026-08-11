@@ -25,8 +25,9 @@ both files change.
 
 ## 1. Overview
 
-- A program is a set of function definitions and global declarations; execution begins at `main()`,
-  which takes no inputs.
+- A program is a sequence of function definitions and global declarations; execution begins at
+  `main()`, which takes no inputs. Definitions may be written in any order, but a global is visible
+  only below the line that declares it ([§6](#6-declarations)).
 - Four types: `int`, `real`, `char`, and arrays of them. Text is `char[]`. See [§5](#5-types).
 - Variables are declared with a type. A *scalar* may also be created by assigning to it; an array
   may not, unless the right-hand side is a literal ([§7.1](#71-assignment)).
@@ -210,6 +211,7 @@ was not wrong.
 | `:` | assignment (`x : expr`) / separator (`for i : 0 to 10`, parameter types, multi-assign) |
 | `=` | **overloaded**, see below |
 | `!=` | not-equal |
+| `<=` `>=` | less-or-equal, greater-or-equal |
 | `<` `>` | **overloaded**, see below |
 | `&` `\|` | logical and / or (operate on truthiness, [§5.5](#55-truthiness)) |
 | `+:` `-:` | compound assign (`x +: 1` ⇔ `x : x + 1`); `+:` also appends to a string |
@@ -251,6 +253,14 @@ The parser disambiguates `<` by lookahead (`looksLikeMultiAssignHeader`): wherev
 statement or continue an expression, it peeks for the exact shape `Identifier {"," Identifier} ">"
 ":"` before committing. The `for` case needs no lookahead — a `<` in that position was a parse error
 in every earlier version, so nothing legal changed meaning.
+
+**`>=` and the function header.** Because the lexer is context-free and matches the longest operator
+first, `fun <>= main()` — the closing `>` of the output list written hard against the separator `=` —
+arrives as a single `>=` token. That spelling parsed before `>=` was an operator, so `parseDefinition`
+accepts a `>=` there and reads it as the `>` plus the `=`. The alternative was to require the space
+and silently break programs over an operator they do not use. Note that this is a symptom, not a
+design: the real cause is `=` doing duty as a separator at all ([§2.5](#25-operators-and-punctuation),
+overload 3), and it would not arise if the header used `:` like every other separator in the language.
 
 ---
 
@@ -303,7 +313,7 @@ PrintItem      ::= "prec" "(" Expression ")" | Expression
 Expression     ::= OrExpr
 OrExpr         ::= AndExpr { "|" AndExpr }
 AndExpr        ::= CompareExpr { "&" CompareExpr }
-CompareExpr    ::= AddExpr { ("=" | "!=" | "<" | ">") AddExpr }
+CompareExpr    ::= AddExpr { ("=" | "!=" | "<" | ">" | "<=" | ">=") AddExpr }
 AddExpr        ::= MulExpr { ("+" | "-") MulExpr }
 MulExpr        ::= PowExpr { ("*" | "/" | "%") PowExpr }
 PowExpr        ::= Postfix [ "^" PowExpr ]
@@ -328,7 +338,7 @@ Loosest-binding to tightest:
 |---|---|---|
 | 1 (loosest) | `\|` | left |
 | 2 | `&` | left |
-| 3 | `=` `!=` `<` `>` | left |
+| 3 | `=` `!=` `<` `>` `<=` `>=` | left |
 | 4 | `+` `-` | left |
 | 5 | `*` `/` `%` | left |
 | 6 | `^` | **right** |
@@ -443,6 +453,24 @@ int   cube[2][3][5]
 lifetime the whole call, which is what lets the checker type a function in one pass.
 
 Only declarations and `fun` definitions may appear at global scope; a statement there is an error.
+
+**A global is visible below the line that declares it, and nowhere above it.** Functions are not
+ordered this way — they are collected in one pass before any body is checked, so `main()` may call
+something written after it — but a global cannot be, because the interpreter creates the globals in
+file order as well. While the checker treated them as an unordered set and the interpreter as a
+sequence, a program the checker had passed could still fail at run time on a name it accepted:
+
+```
+int a : f()                       // runs before b exists
+fun <int> = f() { return b }
+int b : 5
+```
+
+That is now `'b' is a global declared later, on line 3`, reported before anything runs. A name that
+is not in the file at all still reports as `Undefined variable`; the other message is only for one
+that is present, spelled correctly, and further down. One case is still left to the run: a global
+whose own initializer calls a function that reads *that* global — a cycle, not an ordering — reports
+`Undefined variable` at run time, because the box does not exist until the initializer finishes.
 
 An extent must be an `int` and at least `1`. A size the checker can fold is refused before the
 program runs; a size that genuinely depends on a variable is checked at run time and reports the
@@ -874,12 +902,12 @@ char a[20] : "alice"
 char b[128] : "bob"
 ```
 
-Five operators work on two strings:
+Seven operators work on two strings:
 
 | | |
 |---|---|
 | `=` `!=` | content equality |
-| `<` `>` | lexicographic order |
+| `<` `>` `<=` `>=` | lexicographic order |
 | `+` | join, producing a new string sized to the result |
 
 and `+:` appends, which is how one is built in a loop.
@@ -1073,10 +1101,17 @@ be created by assignment — `Declare the array 'C' first` for a non-literal rig
 `An all-blank literal cannot create 'Z'` for a literal with no entry to take a type from
 ([§7.1.1](#711-omitted-entries)).
 
-The two warnings:
+The three warnings:
 
 - `Function 'f' is defined but never called`
 - `'x' hides a global`
+- `Loop never runs: 'i' starts at 10 and step 1 moves away from 1`
+
+The last is reported only where the start, the end and the step all fold to numbers, which
+is where the direction is written into the source and nothing else could have been meant. A
+loop with a computed bound is left alone: an empty pass may be exactly what that run intends,
+and `for j < v.col` over a vector — which expands to `0 to -2` — is the language's own example
+of one.
 
 ### 13.4 Runtime errors
 

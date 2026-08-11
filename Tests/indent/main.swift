@@ -150,6 +150,112 @@ check("a } closing the outermost group goes to column zero",
       typing("}", in: "fun <> = main() {\n   ? \"hi\"\n      ‸"),
       "fun <> = main() {\n   ? \"hi\"\n}")
 
+// ------------------------------------------------------------------ pasting
+
+/// Pastes `text` at the caret, the same way the view controller does: the laid-out edit
+/// where Indent asks for one, the plain insertion where it returns nil.
+func pasting(_ text: String, in marked: String) -> String {
+    guard let caret = marked.range(of: "‸") else { return "no caret in fixture" }
+    let document = marked.replacingOccurrences(of: "‸", with: "") as NSString
+    let location = marked.distance(from: marked.startIndex, to: caret.lowerBound)
+    let range = NSRange(location: location, length: 0)
+
+    if let edit = Indent.paste(of: text, into: document, replacing: range) {
+        return document.replacingCharacters(in: edit.range, with: edit.text)
+    }
+    return document.replacingCharacters(in: range, with: text)
+}
+
+// The case this was written for: the reference indents every code line six columns to sit
+// it inside the prose, and that used to arrive in the editor still wearing them.
+check("code copied from the reference loses its six columns",
+      pasting("      real m[2][2] : {{1.,2.},{3.,4.}}\n      ? m", in: "‸"),
+      "real m[2][2] : {{1.,2.},{3.,4.}}\n? m")
+
+check("a single reference line loses them too",
+      pasting("      ? m", in: "‸"),
+      "? m")
+
+check("a pasted program is laid out by depth",
+      pasting("fun <> = main() {\n? \"hi\"\nif x {\ny : 1\n}\n}", in: "‸"),
+      "fun <> = main() {\n   ? \"hi\"\n   if x {\n      y : 1\n   }\n}")
+
+// Counting from the caret's depth rather than from zero is what puts a pasted body inside
+// the function it is pasted into.
+check("a paste inside a function starts at that function's level",
+      pasting("      ? \"hi\"\n      if x {\n      y : 1\n      }", in: "fun <> = main() {\n   ‸\n}"),
+      "fun <> = main() {\n   ? \"hi\"\n   if x {\n      y : 1\n   }\n}")
+
+check("a paste that ends in a newline leaves the caret in column",
+      pasting("? \"hi\"\n", in: "fun <> = main() {\n   ‸\n}"),
+      "fun <> = main() {\n   ? \"hi\"\n   \n}")
+
+check("blank lines inside a paste stay blank",
+      pasting("      ? \"a\"\n\n      ? \"b\"", in: "‸"),
+      "? \"a\"\n\n? \"b\"")
+
+// A fragment dropped into the middle of a line is not a program, and its leading space
+// may be the point of it.
+check("a fragment pasted mid-line is left alone",
+      pasting(" + 1", in: "fun <> = main() {\n   x : 2‸\n}"),
+      "fun <> = main() {\n   x : 2 + 1\n}")
+
+check("only the lines after the first are laid out mid-line",
+      pasting("1\n      ? x", in: "fun <> = main() {\n   x : ‸\n}"),
+      "fun <> = main() {\n   x : 1\n   ? x\n}")
+
+// Typing must survive all of this: one character is never a paste, and a space at the
+// head of a line is a space.
+check("a typed space at the head of a line is still a space",
+      pasting(" ", in: "fun <> = main() {\n‸"),
+      "fun <> = main() {\n ")
+
+check("text already in the right column is not rewritten",
+      pasting("? \"a\"\n? \"b\"", in: "‸"),
+      "? \"a\"\n? \"b\"")
+
+// What the editor pastes has to survive a reindent unmoved, for the same reason the
+// return case does.
+check("a paste agrees with a full reindent",
+      Indent.reindented(pasting("      fun <> = main() {\n      if x {\n      y : 1\n      }\n      }", in: "‸")),
+      "fun <> = main() {\n   if x {\n      y : 1\n   }\n}")
+
+// ------------------------------------------------------- the keyboard's double space
+
+/// The document that results from the keyboard offering ". " for a second space, in both
+/// shapes it arrives in: over the space it ate, and inserted after it.
+func doubleSpace(_ marked: String, length: Int) -> String {
+    guard let caret = marked.range(of: "‸") else { return "no caret in fixture" }
+    let document = marked.replacingOccurrences(of: "‸", with: "") as NSString
+    let location = marked.distance(from: marked.startIndex, to: caret.lowerBound)
+    let range = NSRange(location: location, length: length)
+
+    if let spaces = Indent.spacesForSentencePeriod(in: document, replacing: range, with: ". ") {
+        return document.replacingCharacters(in: range, with: spaces)
+    }
+    return document.replacingCharacters(in: range, with: ". ")
+}
+
+check("a second space stays a space, not a period",
+      doubleSpace("? x‸ ", length: 1),
+      "? x  ")
+
+check("the same when the keyboard leaves the space in place",
+      doubleSpace("? x ‸", length: 0),
+      "? x  ")
+
+check("a third space is unaffected",
+      doubleSpace("? x  ‸", length: 0),
+      "? x  . ")
+
+check("a space at the head of a line is not the shortcut",
+      doubleSpace("? x\n‸ ", length: 1),
+      "? x\n. ")
+
+check("a period typed over a selected word is not the shortcut",
+      doubleSpace("? ab‸c", length: 1),
+      "? ab. ")
+
 // ------------------------------------------------------------------ edges
 
 check("an empty document survives a return", typing("\n", in: "‸"), "\n")
