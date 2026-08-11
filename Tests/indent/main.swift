@@ -222,39 +222,50 @@ check("a paste agrees with a full reindent",
 
 // ------------------------------------------------------- the keyboard's double space
 
-/// The document that results from the keyboard offering ". " for a second space, in both
-/// shapes it arrives in: over the space it ate, and inserted after it.
-func doubleSpace(_ marked: String, length: Int) -> String {
-    guard let caret = marked.range(of: "‸") else { return "no caret in fixture" }
+/// Whether a space typed at the caret ‸ arms the period watch, and where. The fixture is
+/// the document as it stands before the space lands, so "? x‸" is a space arriving with one
+/// already in front of it - the gesture that sets the shortcut off.
+func armed(_ marked: String, typing text: String = " ") -> Int? {
+    guard let caret = marked.range(of: "‸") else { return nil }
     let document = marked.replacingOccurrences(of: "‸", with: "") as NSString
     let location = marked.distance(from: marked.startIndex, to: caret.lowerBound)
-    let range = NSRange(location: location, length: length)
-
-    if let spaces = Indent.spacesForSentencePeriod(in: document, replacing: range, with: ". ") {
-        return document.replacingCharacters(in: range, with: spaces)
-    }
-    return document.replacingCharacters(in: range, with: ". ")
+    return Indent.spaceAtRiskOfPeriod(in: document,
+                                      replacing: NSRange(location: location, length: 0),
+                                      with: text)
 }
 
-check("a second space stays a space, not a period",
-      doubleSpace("? x‸ ", length: 1),
-      "? x  ")
+func checkArmed(_ name: String, _ got: Int?, _ want: Int?) {
+    if got == want {
+        pass += 1
+    } else {
+        fail += 1
+        print("FAIL: \(name)\n      want: \(String(describing: want))\n      got:  \(String(describing: got))")
+    }
+}
 
-check("the same when the keyboard leaves the space in place",
-      doubleSpace("? x ‸", length: 0),
-      "? x  ")
+// The gesture: a space landing next to a space that closes a word. Index 3 is that first
+// space - the character the keyboard turns into a full stop.
+checkArmed("a second space arms the watch on the first", armed("? x ‸"), 3)
 
-check("a third space is unaffected",
-      doubleSpace("? x  ‸", length: 0),
-      "? x  . ")
+// Everything else leaves it disarmed, which is what keeps a period the typist wrote from
+// ever being taken away from them.
+checkArmed("a first space arms nothing", armed("? x‸"), nil)
+checkArmed("a third space is not the gesture", armed("? x  ‸"), nil)
+checkArmed("a space at the head of a line is not", armed("? x\n ‸"), nil)
+checkArmed("a space opening the document is not", armed(" ‸"), nil)
+checkArmed("a letter arms nothing", armed("? x ‸", typing: "a"), nil)
+checkArmed("a typed period arms nothing", armed("? x ‸", typing: "."), nil)
+checkArmed("a newline arms nothing", armed("? x ‸", typing: "\n"), nil)
 
-check("a space at the head of a line is not the shortcut",
-      doubleSpace("? x\n‸ ", length: 1),
-      "? x\n. ")
-
-check("a period typed over a selected word is not the shortcut",
-      doubleSpace("? ab‸c", length: 1),
-      "? ab. ")
+// And the reading afterwards: the watched character has to have become a period, or the
+// repair must leave the text alone.
+let afterShortcut = "? x. " as NSString
+check("a period at the watched index is the shortcut's",
+      Indent.isSentencePeriod(at: 3, in: afterShortcut) ? "yes" : "no", "yes")
+check("a space at the watched index is not",
+      Indent.isSentencePeriod(at: 3, in: "? x  " as NSString) ? "yes" : "no", "no")
+check("an index past the end is not",
+      Indent.isSentencePeriod(at: 99, in: afterShortcut) ? "yes" : "no", "no")
 
 // ------------------------------------------------------------------ edges
 

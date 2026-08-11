@@ -16,6 +16,10 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     weak var coordinator: MainCoordinator?
     @IBOutlet var lineview: UITextView!
     @IBOutlet var program: UITextView!
+
+    // Index of a space the keyboard's "." shortcut may be about to overwrite, set by
+    // shouldChangeTextIn and read once by the change that follows it.
+    private var periodWatch: Int?
     @IBOutlet var console: UITextView!
     var count: Int = 0
     var source: String {
@@ -668,9 +672,30 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
 
     func textViewDidChange(_ textView: UITextView) {
         guard textView === program else { return }
+        undoSentencePeriod()
         programChanged()
         // The page grows a line at a time and the pane does not follow on its own.
         scrollCaretIntoView()
+    }
+
+    // Puts back the space the keyboard turned into a full stop. shouldChangeTextIn armed
+    // this by noting the index of the space a second space was about to land beside; if that
+    // character is now a period, the shortcut wrote it and it goes back.
+    //
+    // The caret is saved and restored around the edit. The repair happens behind it - one
+    // character replaced by one character, earlier in the line - and without this the text
+    // view would drag the caret back to the mend and the next keystroke would land there.
+    private func undoSentencePeriod() {
+        guard let index = periodWatch else { return }
+        periodWatch = nil
+
+        guard Indent.isSentencePeriod(at: index, in: (program.text ?? "") as NSString),
+              let editRange = Self.textRange(in: program, for: NSRange(location: index, length: 1))
+        else { return }
+
+        let caret = program.selectedTextRange
+        program.replace(editRange, withText: " ")
+        program.selectedTextRange = caret
     }
 
     // Everything the editor owes its text after that text moves. Both halves read the
@@ -939,16 +964,12 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard textView === program else { return true }
 
-        // Two spaces in a row are a period to the keyboard and a lexing error here, so the
-        // spaces that were actually typed go in instead. First, because the substitution
-        // arrives looking like ordinary text and every branch below would pass it through.
-        if let spaces = Indent.spacesForSentencePeriod(in: (textView.text ?? "") as NSString,
-                                                       replacing: range,
-                                                       with: text),
-           let editRange = Self.textRange(in: textView, for: range) {
-            textView.replace(editRange, withText: spaces)
-            return false
-        }
+        // The keyboard's "." shortcut cannot be refused here - it does not pass through this
+        // method at all - so what is done instead is to note where it is about to strike and
+        // undo it in textViewDidChange, once the character it wrote is there to be read.
+        periodWatch = Indent.spaceAtRiskOfPeriod(in: (textView.text ?? "") as NSString,
+                                                 replacing: range,
+                                                 with: text)
 
         // Enter carries the brace depth onto the new line, and a } typed as the first
         // thing on a line pulls that line back one level. Between them the text stays

@@ -225,47 +225,51 @@ enum Indent {
         return (laidOut, NSRange(location: editStart, length: NSMaxRange(range) - editStart))
     }
 
-    // What the keyboard's double-space shortcut should have inserted, or nil when the edit
-    // is not that shortcut.
+    // Where the keyboard's "." shortcut is about to strike, or nil when this edit is not the
+    // one that sets it off. Answer it before the edit; read the character back afterwards.
     //
-    // Two spaces typed in a row are turned by iOS into ". " - a period after the last
-    // non-space character. It is the right thing in prose and wrong in every program: the
-    // period lands against a name, and Shalimar reads that as an attribute, so a line that
-    // was being typed correctly fails to lex. The keyboard traits set in viewDidLoad do not
-    // switch it off; autocorrection and smart punctuation are separate settings from this
-    // one, which is why it has to be caught as an edit.
+    // Two spaces in a row are turned by iOS into ". " - a full stop closing what it takes to
+    // be a sentence. Right in prose and wrong in every program: the period lands against a
+    // name, Shalimar reads that as an attribute, and a line that was being typed correctly
+    // stops lexing. The traits set in viewDidLoad do not switch it off, because it is a
+    // keyboard setting rather than an autocorrection one.
     //
-    // The shortcut is recognized by its exact shape - ". " arriving over, or straight
-    // after, a single space that itself follows something that is not a space. A pasted
-    // ". " that happens to land the same way is indistinguishable from it and becomes two
-    // spaces; that is the cost of the rule, and it is a far smaller surprise than a period
-    // appearing in the middle of a program.
-    static func spacesForSentencePeriod(in document: NSString,
-                                        replacing range: NSRange,
-                                        with text: String) -> String? {
-        guard text == ". ", NSMaxRange(range) <= document.length else { return nil }
+    // It cannot be intercepted, which cost two attempts to learn. An instrumented build
+    // logged every way into the text - the delegate, insertText, replace, deleteBackward,
+    // marked text - and the substitution came through none of them: the second space was
+    // reported as an ordinary space while the character before it silently turned into a
+    // period that nothing was told about. So it is undone rather than prevented. The second
+    // space is the trigger and it *is* reported, which is what makes this exact rather than
+    // a hunt through the text for periods that might not be ours: a period the typist wrote
+    // themselves is never touched, because no space was ever approved where it stands.
+    //
+    // Returns the index of the space that is at risk - the one before the space now being
+    // typed. If that character has become a period by the time the edit lands, it is the
+    // shortcut's and must go back to being a space.
+    static func spaceAtRiskOfPeriod(in document: NSString,
+                                    replacing range: NSRange,
+                                    with text: String) -> Int? {
+        // Only ever armed by a plain space typed at a caret, which is the whole of the
+        // gesture: two spaces, the second one arriving here.
+        guard text == " ", range.length == 0, range.location <= document.length else { return nil }
 
-        func isSpace(_ location: Int) -> Bool {
-            guard location >= 0, location < document.length else { return false }
-            return document.substring(with: NSRange(location: location, length: 1)) == " "
-        }
-        // Nothing at all before the space is the start of the document, where the shortcut
-        // does not fire; a second space before it means the run was already broken.
-        func opensTheRun(_ location: Int) -> Bool {
-            guard location >= 0, location < document.length else { return false }
-            let character = document.substring(with: NSRange(location: location, length: 1))
-            return character != " " && character != "\n" && character != "\t"
-        }
+        let previous = range.location - 1
+        guard previous >= 0, previous < document.length,
+              document.substring(with: NSRange(location: previous, length: 1)) == " " else { return nil }
 
-        // The shortcut replaces the space it ate, and puts the period where that space was.
-        if range.length == 1, isSpace(range.location), opensTheRun(range.location - 1) {
-            return "  "
-        }
-        // The same thing spelled as an insertion after the space, which is how it arrives
-        // when the keyboard leaves the space in place.
-        if range.length == 0, isSpace(range.location - 1), opensTheRun(range.location - 2) {
-            return " "
-        }
-        return nil
+        // The shortcut closes a word, so what stands in front of the first space is never a
+        // space itself - and never the start of a line, where there is no sentence to end.
+        let before = previous - 1
+        guard before >= 0, before < document.length else { return nil }
+        let character = document.substring(with: NSRange(location: before, length: 1))
+        guard character != " ", character != "\n", character != "\t" else { return nil }
+
+        return previous
+    }
+
+    // Whether the character at `index` is the period the shortcut left behind.
+    static func isSentencePeriod(at index: Int, in document: NSString) -> Bool {
+        guard index >= 0, index < document.length else { return false }
+        return document.substring(with: NSRange(location: index, length: 1)) == "."
     }
 }
