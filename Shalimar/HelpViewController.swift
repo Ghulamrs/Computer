@@ -213,7 +213,7 @@ final class HelpViewController: UIViewController {
     OPERATORS
     ---------
       +  -  *  /  %  ^    arithmetic, ^ power
-      =  !=  <  >          comparison
+      =  !=  <  >  <=  >=  comparison
       &  |                 and, or
 
     Highest first:
@@ -221,9 +221,15 @@ final class HelpViewController: UIViewController {
       ^
       *  /  %
       +  -
-      =  !=  <  >
+      =  !=  <  >  <=  >=
       &
       |
+
+    The six comparisons all sit at one level, so
+    'a <= 3 | a >= 5' needs no brackets. & and |
+    take two finished answers and do not stop
+    early, so write 'a <= b' rather than
+    'a < b | a = b', which works out a twice.
 
     ^ groups to the right: 2^3^2 is 2^9, not
     8^2. Watch unary minus: -2^2 is 4, not -4.
@@ -373,10 +379,10 @@ final class HelpViewController: UIViewController {
       ? a + " and " + b
       a +: "!"
 
-    Compare with = != < >, join with +, append
-    with +:. Comparison reads the text, not the
-    capacity, so the same name in a char[20] and
-    a char[128] is equal.
+    Compare with = != < > <= >=, join with +,
+    append with +:. Comparison reads the text,
+    not the capacity, so the same name in a
+    char[20] and a char[128] is equal.
 
     Ordering is by character code, so capitals
     come before lower case: "Zoe" is before
@@ -450,6 +456,24 @@ final class HelpViewController: UIViewController {
     --------
       // to the end of the line
 
+    GLOBALS
+    -------
+    A declaration outside any function is a
+    global, and every function below it can use
+    it:
+
+      int c : 0
+
+      fun <> = count() {
+        c : c + 1
+      }
+
+    Only below it. Functions may be written in
+    any order, but a global declared under a
+    function that uses it is not in scope there -
+    the program is built from the top down, and
+    the message names the line it is declared on.
+
     MESSAGES
     --------
       Error:    the program will not run
@@ -457,7 +481,13 @@ final class HelpViewController: UIViewController {
 
     Every message names its line. A warning
     appears for a function that is never called,
-    and for a name that hides a global.
+    for a name that hides a global, and for a
+    loop whose step points away from its end:
+
+      for i : 10 to 1 step 1
+
+    counts up from 10 and stops at 1, so it runs
+    no passes at all. Count down with step -1.
 
     LIMITS
     ------

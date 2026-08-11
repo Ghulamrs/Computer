@@ -939,6 +939,17 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     func textView(_ textView: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool {
         guard textView === program else { return true }
 
+        // Two spaces in a row are a period to the keyboard and a lexing error here, so the
+        // spaces that were actually typed go in instead. First, because the substitution
+        // arrives looking like ordinary text and every branch below would pass it through.
+        if let spaces = Indent.spacesForSentencePeriod(in: (textView.text ?? "") as NSString,
+                                                       replacing: range,
+                                                       with: text),
+           let editRange = Self.textRange(in: textView, for: range) {
+            textView.replace(editRange, withText: spaces)
+            return false
+        }
+
         // Enter carries the brace depth onto the new line, and a } typed as the first
         // thing on a line pulls that line back one level. Between them the text stays
         // laid out as it is typed, so reindenting is only needed on the way in.
@@ -954,6 +965,19 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         }
 
         let normalized = Self.normalizedToASCII(text)
+
+        // A paste is laid out at the level it lands in rather than keeping the indentation
+        // it was copied with - six columns of it, when it comes from the reference. It is
+        // normalized first, so what gets laid out is the ASCII that will actually be
+        // inserted and not a lookalike that would move the braces this counts.
+        if let laidOut = Indent.paste(of: normalized,
+                                      into: (textView.text ?? "") as NSString,
+                                      replacing: range),
+           let editRange = Self.textRange(in: textView, for: laidOut.range) {
+            textView.replace(editRange, withText: laidOut.text)
+            return false
+        }
+
         guard normalized != text else { return true }
 
         // Insert the cleaned text and reject the original edit. This cannot recurse:

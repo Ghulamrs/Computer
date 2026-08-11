@@ -17,6 +17,8 @@ final class Checker {
 
     private var prototypes: [String: PrototypeNode] = [:]
     private var globals: [String: ShalimarType] = [:]
+    // Globals not yet reached by the file-order walk, with the line each is declared on.
+    private var laterGlobals: [String: Int] = [:]
     private var scopes: [[String: ShalimarType]] = []
     private var currentPrototype: PrototypeNode?
 
@@ -76,7 +78,7 @@ final class Checker {
 
     func check(_ program: [Node]) -> [Node] {
         collectPrototypes(program)
-        collectGlobals(program)
+        collectLaterGlobals(program)
 
         guard let main = prototypes["main"] else {
             error("No main() function defined", program.last.flatMap { ($0 as? StmtNode)?.line } ?? 1)
@@ -91,10 +93,25 @@ final class Checker {
             warn("'\(name)' is never called", prototypes[name]?.line ?? 1)
         }
 
-        return program.map { node in
-            guard let function = node as? FunctionNode else { return node }
-            return checkFunction(function)
+        // In file order, because a global is visible only below the line that declares it.
+        // Functions are not ordered this way and never were - they are collected above, so
+        // main() may call something written after it - but a global cannot follow them,
+        // because the interpreter creates the globals in file order too. When the two
+        // disagreed, this stage passed a program the run then failed: 'int a : f()' whose
+        // f() reads a global declared further down was accepted here and died at run time
+        // with an 'Undefined variable' nothing static had seen. One order for both.
+        var checked = [Node]()
+        for node in program {
+            if let declaration = node as? DeclareNode {
+                declareGlobal(declaration)
+                checked.append(declaration)
+            } else if let function = node as? FunctionNode {
+                checked.append(checkFunction(function))
+            } else {
+                checked.append(node)
+            }
         }
+        return checked
     }
 
     private func collectPrototypes(_ program: [Node]) {
@@ -119,15 +136,33 @@ final class Checker {
         }
     }
 
-    private func collectGlobals(_ program: [Node]) {
-        for case let declaration as DeclareNode in program {
-            if refuseConstant(declaration.name, "declared", declaration.line) { continue }
-            if globals[declaration.name] != nil {
-                error("Variable '\(declaration.name)' already defined", declaration.line)
-                continue
-            }
-            checkDeclaredType(declaration)
-            globals[declaration.name] = declaration.type
+    private func declareGlobal(_ declaration: DeclareNode) {
+        if refuseConstant(declaration.name, "declared", declaration.line) { return }
+        if globals[declaration.name] != nil {
+            error("Variable '\(declaration.name)' already defined", declaration.line)
+            return
+        }
+        checkDeclaredType(declaration)
+        globals[declaration.name] = declaration.type
+        laterGlobals[declaration.name] = nil
+    }
+
+    // Every global with the line it is declared on, so a name used above its declaration
+    // can say so. Without this the message would be 'Undefined variable', which is true
+    // but sends the reader looking for a name that is in the file, spelled correctly, a
+    // few lines further down.
+    private func collectLaterGlobals(_ program: [Node]) {
+        for case let declaration as DeclareNode in program where laterGlobals[declaration.name] == nil {
+            laterGlobals[declaration.name] = declaration.line
+        }
+    }
+
+    // Reports a name that is not in scope, naming the declaration below when there is one.
+    private func reportUndefined(_ name: String, _ line: Int) {
+        if let declaredAt = laterGlobals[name] {
+            error("'\(name)' is a global declared later, on line \(declaredAt)", line)
+        } else {
+            error("Undefined variable '\(name)'", line)
         }
     }
 
@@ -361,7 +396,7 @@ final class Checker {
         let target = resolveTarget(node.target, line: node.line)
         if refuseConstant(target.root, "assigned to", node.line) { return node }
         guard let targetType = target.type else {
-            error("Undefined variable '\(target.root)'", node.line)
+            reportUndefined(target.root, node.line)
             return node
         }
         // '+:' on a string appends, which is how one gets built in a loop. '-:' has no
@@ -466,6 +501,8 @@ final class Checker {
         let end = coerce(node.end, to: counterType, line: node.line)
         let step = node.step.map { coerce($0, to: counterType, line: node.line) }
 
+        warnIfEmpty(node)
+
         _ = refuseConstant(node.variable, "used as a loop counter", node.line)
         scopes.append([node.variable: counterType])
         let body = node.body.map { checkStatement($0) }
@@ -473,6 +510,60 @@ final class Checker {
 
         return ForNode(variable: node.variable, start: start, end: end, step: step,
                        body: body, line: node.line)
+    }
+
+    // 'for i : 10 to 1 step 1' counts up from a start that is already past its end, so it
+    // runs zero times and prints nothing - the step points away from the end rather than
+    // toward it. Nothing about that is illegal, and a count that comes out empty is how
+    // 'for j < v.col' over a vector is meant to behave, so this is a warning and the
+    // program still runs.
+    //
+    // Only a loop whose three bounds all fold to numbers is judged here. That is the case
+    // where the direction is written into the source and nothing else could have been
+    // meant; where a bound is computed, an empty pass may be exactly what the program
+    // intends on that run, and a checker has no way to tell the two apart.
+    private func warnIfEmpty(_ node: ForNode) {
+        guard let start = constantNumber(node.start),
+              let end = constantNumber(node.end) else { return }
+
+        // An omitted step is +1, which is what makes 'for i : 10 to 1' the same mistake
+        // written shorter.
+        var step = 1.0
+        if let written = node.step {
+            guard let folded = constantNumber(written) else { return }
+            step = folded
+        }
+        // Zero is refused at run time with a message of its own; it has no direction to
+        // report and would read here as a step that moves away from everything.
+        guard step != 0 else { return }
+        guard step > 0 ? start > end : start < end else { return }
+
+        warn("Loop never runs: '\(node.variable)' starts at \(number(start)) "
+             + "and step \(number(step)) moves away from \(number(end))", node.line)
+    }
+
+    // Folds what the two loop-bound rules need and nothing more. Division is left out
+    // deliberately: '/' means one thing between ints and another between reals, and a
+    // folder that got that wrong would report a bound the program never uses.
+    private func constantNumber(_ expr: ExprNode) -> Double? {
+        if let int = expr as? IntNode { return Double(int.value) }
+        if let real = expr as? RealNode { return real.value }
+        guard let binary = expr as? BinaryOpNode,
+              let lhs = constantNumber(binary.lhs),
+              let rhs = constantNumber(binary.rhs) else { return nil }
+        switch binary.op {
+        case .add:      return lhs + rhs
+        case .subtract: return lhs - rhs
+        case .multiply: return lhs * rhs
+        default:        return nil
+        }
+    }
+
+    // A whole number reads better without the decimals a Double would print, and every
+    // bound that reaches here from an int loop is one.
+    private func number(_ value: Double) -> String {
+        guard value == value.rounded(), let exact = Int(exactly: value) else { return "\(value)" }
+        return "\(exact)"
     }
 
     private func checkSubScope(_ body: [StmtNode]) -> [StmtNode] {
@@ -530,7 +621,7 @@ final class Checker {
 
         case let node as VariableNode:
             guard let type = lookup(node.name) else {
-                error("Undefined variable '\(node.name)'", line)
+                reportUndefined(node.name, line)
                 return .int
             }
             return type

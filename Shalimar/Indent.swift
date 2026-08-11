@@ -3,7 +3,10 @@
 //  Shalimar
 //
 //  Brace-directed layout for the editor: how deep a line sits, how a whole program is
-//  laid out, and what edit a typed newline or } should become.
+//  laid out, and what edit a typed newline, a }, or an arriving paste should become.
+//  One rule here is not about indentation at all - the keyboard's double-space period -
+//  and lives beside the others because it is the same kind of thing: an edit the editor
+//  has to rewrite before it lands, decided from text alone.
 //
 //  No UIKit here, deliberately. Every rule is text in, text out - a document, a caret,
 //  an edit - so Tests/regression.sh can exercise them as a command-line binary. It is
@@ -138,5 +141,131 @@ enum Indent {
         let replacement = String(repeating: " ", count: depth * width) + "}"
         guard replacement != onLine + "}" else { return nil }
         return (replacement, NSRange(location: start, length: NSMaxRange(range) - start))
+    }
+
+    // The edit that lays arriving text out at the level it lands in, or nil for text that
+    // should go in exactly as it came.
+    //
+    // Text that arrives in one edit and is longer than a keystroke is a paste, and it
+    // brings someone else's indentation with it. From the reference that is six columns
+    // of it - every code line there is indented to sit inside the prose - and pasted into
+    // the editor it kept them, which is neither the level it belongs at nor a step anything
+    // else in the document uses. It is laid out here exactly the way reindented() lays out
+    // a whole program, but counting from the depth the caret is standing in rather than
+    // from zero, so a body pasted inside a function lands inside it.
+    //
+    // Two cases are deliberately left alone. A single line dropped into the middle of an
+    // existing one is a fragment, and its leading space may be the whole point of it; and
+    // a blank line inside the paste stays blank rather than collecting trailing space.
+    static func paste(of text: String,
+                      into document: NSString,
+                      replacing range: NSRange) -> (text: String, range: NSRange)? {
+        guard range.location <= document.length,
+              NSMaxRange(range) <= document.length else { return nil }
+
+        // One character is a keystroke, never a paste - and a typed space must stay a
+        // space, or the space bar would stop working at the head of a line.
+        guard text.count > 1,
+              text.contains("\n") || text.first == " " || text.first == "\t" else { return nil }
+
+        let head = document.substring(to: range.location)
+        let newline = (head as NSString).range(of: "\n", options: .backwards).location
+        let lineStart = newline == NSNotFound ? 0 : newline + 1
+        let onLine = document.substring(with: NSRange(location: lineStart,
+                                                     length: range.location - lineStart))
+        let atLineHead = onLine.allSatisfy { $0 == " " || $0 == "\t" }
+
+        var lines = text.components(separatedBy: "\n")
+        guard atLineHead || lines.count > 1 else { return nil }
+
+        var out = [String]()
+        var depth: Int
+        var editStart: Int
+
+        if atLineHead {
+            // The space already on the line is the editor's own indent, not the paste's.
+            // Taking it into the edit rather than adding to it is what lets the first
+            // pasted line be measured the same way as the ones after it.
+            editStart = lineStart
+            depth = braceDepth(of: document.substring(to: lineStart))
+        } else {
+            // Mid-line: the first pasted line finishes the line that is already there, so
+            // it goes in untouched and only what follows a newline is laid out.
+            editStart = range.location
+            let first = lines.removeFirst()
+            out.append(first)
+            depth = braceDepth(of: head + first)
+        }
+
+        for rawLine in lines {
+            let line = rawLine.trimmingCharacters(in: .whitespaces)
+            guard !line.isEmpty else {
+                out.append("")
+                continue
+            }
+            let counts = braceCounts(in: line)
+            let level = max(0, depth - counts.leadingCloses)
+            out.append(String(repeating: " ", count: level * width) + line)
+            depth = max(0, depth + counts.opens - counts.closes)
+        }
+
+        // A paste ending in a newline leaves the caret on a line of its own. It gets the
+        // indent Return would have given it, so typing carries on in column instead of
+        // restarting at zero under the text that just arrived.
+        if out.last == "" && out.count > 1 && depth > 0 {
+            out[out.count - 1] = String(repeating: " ", count: depth * width)
+        }
+
+        let laidOut = out.joined(separator: "\n")
+        let prefix = document.substring(with: NSRange(location: editStart,
+                                                     length: range.location - editStart))
+        // Nothing to correct: let the insertion happen on its own rather than replacing
+        // text with itself, which would cost an undo step and move the caret for nothing.
+        guard laidOut != prefix + text else { return nil }
+        return (laidOut, NSRange(location: editStart, length: NSMaxRange(range) - editStart))
+    }
+
+    // What the keyboard's double-space shortcut should have inserted, or nil when the edit
+    // is not that shortcut.
+    //
+    // Two spaces typed in a row are turned by iOS into ". " - a period after the last
+    // non-space character. It is the right thing in prose and wrong in every program: the
+    // period lands against a name, and Shalimar reads that as an attribute, so a line that
+    // was being typed correctly fails to lex. The keyboard traits set in viewDidLoad do not
+    // switch it off; autocorrection and smart punctuation are separate settings from this
+    // one, which is why it has to be caught as an edit.
+    //
+    // The shortcut is recognized by its exact shape - ". " arriving over, or straight
+    // after, a single space that itself follows something that is not a space. A pasted
+    // ". " that happens to land the same way is indistinguishable from it and becomes two
+    // spaces; that is the cost of the rule, and it is a far smaller surprise than a period
+    // appearing in the middle of a program.
+    static func spacesForSentencePeriod(in document: NSString,
+                                        replacing range: NSRange,
+                                        with text: String) -> String? {
+        guard text == ". ", NSMaxRange(range) <= document.length else { return nil }
+
+        func isSpace(_ location: Int) -> Bool {
+            guard location >= 0, location < document.length else { return false }
+            return document.substring(with: NSRange(location: location, length: 1)) == " "
+        }
+        // Nothing at all before the space is the start of the document, where the shortcut
+        // does not fire; a second space before it means the run was already broken.
+        func opensTheRun(_ location: Int) -> Bool {
+            guard location >= 0, location < document.length else { return false }
+            let character = document.substring(with: NSRange(location: location, length: 1))
+            return character != " " && character != "\n" && character != "\t"
+        }
+
+        // The shortcut replaces the space it ate, and puts the period where that space was.
+        if range.length == 1, isSpace(range.location), opensTheRun(range.location - 1) {
+            return "  "
+        }
+        // The same thing spelled as an insertion after the space, which is how it arrives
+        // when the keyboard leaves the space in place.
+        if range.length == 0, isSpace(range.location - 1), opensTheRun(range.location - 2) {
+            return " "
+        }
+        return nil
     }
 }

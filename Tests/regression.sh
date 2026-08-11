@@ -960,6 +960,46 @@ t "bad bound reports, not traps" "before  Error: line 3: Loop end" 'fun <> = mai
 ? "before"
 for i:1. to 0./0. {
 ?? i } }'
+# A step pointing away from the end is a loop that runs zero times. It is a warning, not an
+# error - an empty count is legitimate, which is why 'for j < v.col' over a vector is allowed
+# to run none - so the program still runs and the rest of it still prints.
+t "step away from the end warns" "Loop never runs: 'i' starts at 10 and step 1 moves away from 1" 'fun <> = main() { for i : 10 to 1 step 1 {
+?? i }
+? "done" }'
+t "the warning does not stop the run" "done" 'fun <> = main() { for i : 10 to 1 step 1 {
+?? i }
+? "done" }'
+t "a missing step is the same mistake" "Loop never runs: 'i' starts at 10 and step 1 moves away from 1" 'fun <> = main() { for i : 10 to 1 {
+?? i }
+? "done" }'
+t "a negative step counting up warns" "Loop never runs: 'i' starts at 1 and step -1 moves away from 10" 'fun <> = main() { for i : 1 to 10 step -1 {
+?? i }
+? "done" }'
+t "a folded bound is judged too" "Loop never runs: 'i' starts at 10 and step 1 moves away from 2" 'fun <> = main() { for i : 5*2 to 4-2 {
+?? i }
+? "done" }'
+t "real bounds are judged too" "Loop never runs: 'x' starts at 2 and step -1 moves away from 3" 'fun <> = main() { for x : 2. to 3. step -1. {
+?? x }
+? "done" }'
+# The loops that do run, and the ones whose direction cannot be read off the source, stay quiet.
+t "counting down is not a warning" "3 2 1" 'fun <> = main() { for i : 3 to 1 step -1 {
+?? i } }'
+t "counting up is not a warning" "1 2 3" 'fun <> = main() { for i : 1 to 3 {
+?? i } }'
+t "one pass is not a warning" "5" 'fun <> = main() { for i : 5 to 5 {
+?? i } }'
+t "a computed bound is not judged" "none" 'fun <> = main() { real v[4]
+for j < v.col {
+?? "ran" }
+? "none" }'
+t "a variable bound is not judged" "none" 'fun <> = main() { n : 1
+for i : 10 to n {
+?? "ran" }
+? "none" }'
+# Zero has no direction; it is refused at run time with a message of its own.
+t "a zero step is still the zero-step error" "Step value cannot be zero" 'fun <> = main() { for i : 10 to 1 step 0 {
+?? i } }'
+
 t "return out of if" "9" 'fun <int> = f(n: int) { if n > 0 { return 9 } return 1 }
 fun <> = main() {
 ? f(5) }'
@@ -1197,6 +1237,38 @@ fun <> = main() {
 t "global declaration is allowed" "4" 'int g : 4
 fun <> = main() {
 ? g }'
+# A global is visible below the line that declares it and nowhere above it. Functions are
+# not ordered this way - main() may call something written after it - but a global cannot
+# be, because the interpreter creates the globals in file order: when the checker treated
+# them as a set and the interpreter as a sequence, a program the checker passed could still
+# die at run time on a name it had accepted.
+t "a global is visible below its declaration" "3" 'int c : 0
+fun <> = hello() { for i < 3 { c : c + i }
+? c }
+fun <> = main() { hello() }'
+t "a global is not visible above it" "'c' is a global declared later, on line 3" 'fun <> = hello() { for i < 3 { c : c + i }
+? c }
+int c : 0
+fun <> = main() { hello() }'
+t "the message names the declaration line" "on line 4" 'fun <> = f() {
+? g }
+fun <> = main() { f() }
+int g : 1'
+# The run-time failure this closes: the checker passed this program, then the interpreter
+# built the globals in order and f() reached one that did not exist yet.
+t "a global initializer cannot reach a later global" "'b' is a global declared later, on line 3" 'int a : f()
+fun <int> = f() { return b }
+int b : 5
+fun <> = main() {
+? a b }'
+t "an initializer may reach an earlier global" "5 5" 'int b : 5
+int a : b
+fun <> = main() {
+? a b }'
+# A name that is nowhere in the file still reports as undefined - the new message is only
+# for one that is there, spelled correctly, further down.
+t "a name that is nowhere is still undefined" "Undefined variable 'zz'" 'fun <> = main() {
+? zz }'
 # "!" lost its print role to "??" and is now only the first half of "!=".
 t "bare ! is not a command" "'!' is not a command" 'fun <> = main() { x : 1
 ! x }'
