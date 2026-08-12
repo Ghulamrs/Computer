@@ -1186,6 +1186,34 @@ Real, verified behavior of the current interpreter, worth knowing before extendi
 13. **A scanned line that Vision merges with its neighbour can only be reported, not recovered**
     ([§7.8](#78-print)). Automatic splitting is deliberately not attempted — it would silently rewrite
     a program whose one-line print command is a real error.
+14. **The keyboard's full stop is undone after the fact, not refused.** iOS turns two spaces in a row
+    into `". "`, closing what it takes to be a sentence. In prose that is right; here the period lands
+    against whatever name precedes it and the lexer reads `name.` as the head of an attribute
+    ([§9.1](#91-dimensions)), so a line being typed correctly stops parsing. It is a keyboard setting
+    rather than an autocorrection one, so the `UITextInputTraits` set in `viewDidLoad` — which do
+    switch off smart quotes, smart dashes and spell checking — leave it on.
+
+    It also cannot be intercepted. An instrumented build logged every route into the text and the
+    substitution came through none of them: `textView(_:shouldChangeTextIn:replacementText:)` saw the
+    second space as an ordinary space, and a `UITextView` subclass overriding `insertText`, `replace`,
+    `deleteBackward` and the marked-text pair saw only the ordinary keystrokes. The character before
+    the caret turned into a period that nothing was told about.
+
+    So the editor repairs it instead. The second space *is* reported, so `shouldChangeTextIn` notes
+    the index of the space it is about to land beside (`Indent.spaceAtRiskOfPeriod`) and
+    `textViewDidChange` reads that character back: if it has become a period, it goes back to being a
+    space. Being armed by the keystroke rather than by hunting the text for periods is what makes it
+    exact — a period the typist wrote is never touched, so `1.5` and `A.row` type normally.
+
+    **The assumption to watch** is that the substitution lands in the same run-loop turn as the change
+    notification. It does today, which is the only reason the repair sees a period rather than a
+    space; if a future iOS deferred it by a turn, the repair would quietly stop firing and the periods
+    would come back. Nothing in `Tests/regression.sh` would notice — the suite compiles no UIKit, and
+    the shortcut cannot be triggered by injected text at all, only by a thumb on a space bar. This is
+    the one behaviour in the project whose only test is a person typing.
+
+    Only the editor is affected. A program arriving from a file or the scanner never passes through
+    the keyboard.
 
 ---
 
@@ -1201,9 +1229,11 @@ Real, verified behavior of the current interpreter, worth knowing before extendi
 | UI wiring | `ComputeViewController.swift` | owns the program/console text views, runs lex → parse → check → interpret, colours the console by severity, plus save/load and OCR scan |
 | Reference | `HelpViewController.swift` | the in-app language reference; every code line in it runs as written |
 | Scan layout | `ScanLayout.swift` | OCR regions → source lines; no UIKit/Vision dependency, so it is testable from the command line |
+| Editor layout | `Indent.swift` | where a line sits by brace depth, what a typed newline or `}` becomes, how an arriving paste is laid out, and where the keyboard's full stop is about to strike ([§15](#15-known-limitations--maintainer-notes), note 14); kept clear of UIKit for the same reason as `ScanLayout` |
 | Test harness | `Tests/harness/main.swift` | command-line driver; mirrors the app's order exactly, so the suite tests what the app does |
-| Regression suite | `Tests/regression.sh` | ~288 cases, including every program in `Examples/` end to end |
+| Regression suite | `Tests/regression.sh` | ~445 cases, including every program in `Examples/` end to end |
 | Scan-layout tests | `Tests/scanlayout/main.swift` | 16 cases over `ScanLayout`, folded into the suite's counts |
+| Editor-layout tests | `Tests/indent/main.swift` | 51 cases over `Indent`, written as the editor sees them — a document with a caret, an edit, and the document that should come back |
 
 The checker is the stage 3.0 added, and it behaves unlike the other two: it does not stop at the
 first problem, so every diagnostic is printed and only an error prevents the run.
