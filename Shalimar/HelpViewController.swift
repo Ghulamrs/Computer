@@ -513,6 +513,25 @@ final class HelpViewController: UIViewController {
 
       There is no input. A program only prints.
 
+    THE EDITOR
+    ----------
+    The editor lays code out as you type. Return
+    carries the indent onto the next line, and a
+    } typed at the head of a line pulls that line
+    back one level.
+
+    Pasted code is laid out the same way, at the
+    level it lands in - so an example copied from
+    this reference arrives in column, even though
+    it is indented here to sit inside the text.
+
+    Two spaces stay two spaces. Other apps end a
+    sentence for you by turning the second one
+    into a full stop, which would leave a . next
+    to a name - the opening of .row as far as the
+    lexer is concerned. Here the spaces are put
+    back.
+
     WRITING FOR THE CAMERA
     ----------------------
     The scanner reads printed or clearly written
