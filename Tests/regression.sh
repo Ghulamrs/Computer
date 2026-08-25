@@ -87,10 +87,14 @@ fun <> = main() {
 ? 42 }'
 
 # --------------------------------------------------------------- 5.6 calls / args
-# 3.0: a user function may not take a built-in's name at all. 2.x resolved the clash
-# silently in the built-in's favour, so the definition was dead code with no warning.
-t "user fn cannot reuse a builtin name" "is a built-in name" 'fun <real> = sqrt(x: real) { return 999. }
+# 3.1: a user function may take a built-in's name and wins. 3.0 refused the
+# definition outright, which cost every program the words max, min, len and abs;
+# 2.x accepted it and then called the built-in, so the definition was dead code
+# with no warning. Neither. The file's own sqrt is the one that runs.
+t "user fn may reuse a builtin name and wins" "999" 'fun <real> = sqrt(x: real) { return 999. }
 fun <> = main() {
+? sqrt(16.) }'
+t "the builtin is there when nobody claims it" "4.0000000" 'fun <> = main() {
 ? sqrt(16.) }'
 t "builtin rejects string arg" "Cannot use char[] where real is required" 'fun <> = main() {
 ? sqrt("hi") }'
@@ -265,12 +269,12 @@ t "degrees to radians" "1.0000000" 'fun <> = main() { real d : 90.
 ? sin(d * pi / 180.) }'
 t "pi cannot be assigned" "'pi' is a constant" 'fun <> = main() { pi : 3.
 ? pi }'
-t "pi cannot be declared" "'pi' is a constant" 'fun <> = main() { real pi : 3.
+t "pi may be declared, and is then yours" "3.0000000" 'fun <> = main() { real pi : 3.
 ? pi }'
-t "pi cannot be a global" "'pi' is a constant" 'real pi : 3.
+t "pi may be a global" "3.0000000" 'real pi : 3.
 fun <> = main() {
 ? pi }'
-t "pi cannot be a parameter" "'pi' is a constant" 'fun <> = f(pi: real) {
+t "pi may be a parameter" "1.0000000" 'fun <> = f(pi: real) {
 ? pi }
 fun <> = main() { f(1.) }'
 t "pi cannot be a loop counter" "'pi' is a constant" 'fun <> = main() { for pi < 3 {

@@ -121,10 +121,6 @@ final class Checker {
                 error("Function '\(name)' already defined (line \(existing.line))", function.line)
                 continue
             }
-            if Checker.builtins[name] != nil {
-                error("'\(name)' is a built-in name", function.line)
-                continue
-            }
             // The parser reads 'prec(' in a print list as the precision directive before
             // it could ever resolve to this function, so the definition would be silently
             // unreachable there. Refuse it rather than let the two spellings diverge.
@@ -137,7 +133,6 @@ final class Checker {
     }
 
     private func declareGlobal(_ declaration: DeclareNode) {
-        if refuseConstant(declaration.name, "declared", declaration.line) { return }
         if globals[declaration.name] != nil {
             error("Variable '\(declaration.name)' already defined", declaration.line)
             return
@@ -203,10 +198,17 @@ final class Checker {
         return globals[name] ?? Checker.constants[name]
     }
 
-    // Returns true (having reported) when a name is a constant being reused as a variable.
+    // A program may have its own pi or e, but it has to say so. Declared, or a
+    // parameter, the name is the program's for that body. Created by assignment
+    // it is refused: Shalimar makes a name on first write, so 'pi : 3' would
+    // leave '? pi' meaning 3.14159 above the line and 3 below it - one name with
+    // two meanings in one function, which is the hazard the language document
+    // named when it made these read-only.
     private func refuseConstant(_ name: String, _ role: String, _ line: Int) -> Bool {
+        _ = role
         guard Checker.constants[name] != nil else { return false }
-        error("'\(name)' is a constant", line)
+        if isLocal(name) || globals[name] != nil { return false }
+        error("'\(name)' is a constant - declare it first if you want your own", line)
         return true
     }
 
@@ -234,7 +236,6 @@ final class Checker {
         defer { currentPrototype = nil; scopes = [] }
 
         for parameter in function.prototype.inputs {
-            _ = refuseConstant(parameter.name, "used as a parameter name", function.line)
             if scopes[0][parameter.name] != nil {
                 error("Parameter '\(parameter.name)' already defined", function.line)
             }
@@ -318,9 +319,6 @@ final class Checker {
     private func checkDeclaration(_ node: DeclareNode) -> StmtNode {
         checkDeclaredType(node)
 
-        if refuseConstant(node.name, "declared", node.line) {
-            return node
-        }
         if isLocal(node.name) {
             error("Variable '\(node.name)' already defined", node.line)
         } else if globals[node.name] != nil {
@@ -833,7 +831,10 @@ final class Checker {
     }
 
     private func checkCall(_ node: CallNode, line: Int) -> (call: CallNode, type: ShalimarType) {
-        if let builtin = Checker.builtins[node.callee] {
+        // The program's own function wins. A builtin is what the name means when
+        // nothing in the file has claimed it - the rule C gets from headers, said
+        // without needing headers to say it.
+        if prototypes[node.callee] == nil, let builtin = Checker.builtins[node.callee] {
             return checkBuiltinCall(node, builtin, line: line)
         }
         guard let prototype = prototypes[node.callee] else {

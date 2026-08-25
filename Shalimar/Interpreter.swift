@@ -728,7 +728,11 @@ final class Interpreter {
         let line = node.line
         currentLine = line
 
-        if let values = try callBuiltin(node) { return values }
+        // The program's own function wins, as the checker decided. Asking the
+        // builtins first would run sqrt for a program that defined its own.
+        if prototypes[node.callee] == nil, let values = try callBuiltin(node) {
+            return values
+        }
 
         guard let prototype = prototypes[node.callee] else {
             throw RuntimeError(message: "Unknown function '\(node.callee)'", line: line)
