@@ -18,6 +18,8 @@ enum ParseError: Error, CustomStringConvertible {
     case UnknownAttribute(String)
     case AttributeNotAssignable(String)
     case DimNeedsAnAxis
+    case UsesNeedsAName
+    case UsesNeedsANameAfterComma
 
     var message: String {
         switch self {
@@ -43,6 +45,10 @@ enum ParseError: Error, CustomStringConvertible {
             return "No '.\(name)' - use .row, .col or .dim(n)"
         case .AttributeNotAssignable(let name):
             return "'.\(name)' is read-only"
+        case .UsesNeedsAName:
+            return "'uses' needs the name of a library function"
+        case .UsesNeedsANameAfterComma:
+            return "a library function's name must follow the comma"
         case .DimNeedsAnAxis:
             return "'.dim' needs an axis, as .dim(0)"
         }
@@ -162,6 +168,7 @@ class Parser {
         case .To:     return "to"
         case .Step:   return "step"
         case .Fun:    return "fun"
+        case .Uses:   return "uses"
         case .Return: return "return"
         case .Break:    return "break"
         case .Continue: return "continue"
@@ -184,6 +191,8 @@ class Parser {
                     nodes.append(try parseDefinition())
                 case .Int, .Real, .Char:
                     nodes.append(try parseDeclaration())
+                case .Uses:
+                    try parseUses()
                 default:
                     throw ParseError.StatementInGlobalSpace(describe(peekCurrentToken().kind))
                 }
@@ -525,6 +534,41 @@ class Parser {
         _ = popCurrentToken()
         _ = popCurrentToken()
         return true
+    }
+
+    // `uses sin, cos, tan` - what this file borrows from the C library.
+    //
+    // The interpreter has every one of these already and links nothing, so it
+    // reads the clause and moves on. It still has to READ it: this and shc must
+    // agree on what a program is, or a file that compiles will not run and the
+    // suite will record the disagreement as the expected answer. See
+    // ../Compiler-S/docs/FOREIGN.md.
+    // **Each check happens BEFORE the token it complains about is consumed.**
+    // This parser locates an error at whatever token it stopped on, so popping
+    // the comma and then objecting would report the line the *next* statement
+    // starts on - and shc, which keeps the comma's own line, would disagree
+    // with it. The two were briefly out by one line here, saying the same
+    // sentence about different places.
+    private func parseUses() throws {
+        guard isIdentifier(peekNextToken().kind) else { throw ParseError.UsesNeedsAName }
+        _ = popCurrentToken()
+
+        while true {
+            guard isIdentifier(peekCurrentToken().kind) else {
+                throw unexpected(peekCurrentToken().kind)
+            }
+            _ = popCurrentToken()
+            guard peekCurrentToken().kind == .Comma else { break }
+            guard isIdentifier(peekNextToken().kind) else {
+                throw ParseError.UsesNeedsANameAfterComma
+            }
+            _ = popCurrentToken()
+        }
+    }
+
+    private func isIdentifier(_ kind: TokenKind) -> Bool {
+        if case .Identifier = kind { return true }
+        return false
     }
 
     private func parseIf(line: Int) throws -> StmtNode {

@@ -16,7 +16,7 @@ enum TokenKind: Equatable {
     case BracketOpen, BracketClose
     case Comma, Dot
 
-    case If, Else, While, For, To, Step, Fun, Return
+    case If, Else, While, For, To, Step, Fun, Return, Uses
     case Break, Continue
     case Int, Real, Char
 
@@ -65,6 +65,7 @@ let tokenList: [(String, TokenGenerator)] = [
         case "to":     return .To
         case "step":   return .Step
         case "fun":    return .Fun
+        case "uses":   return .Uses
         case "return": return .Return
         case "break":    return .Break
         case "continue": return .Continue
