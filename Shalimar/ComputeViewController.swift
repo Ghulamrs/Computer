@@ -813,7 +813,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // reserved, so it is an ordinary name now and colouring it would tell the
     // reader the opposite of what the lexer does.
     static let keywords: Set<String> = [
-        "if", "else", "while", "for", "to", "step", "fun", "return",
+        "if", "else", "while", "for", "to", "step", "fun", "return", "uses",
         "break", "continue", "int", "real", "char"
     ]
 

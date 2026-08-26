@@ -121,7 +121,7 @@ Case-sensitive. Keywords are recognized case-insensitively at the lexer level (t
 `lowercased()` before the switch) and can never be used as identifiers:
 
 ```
-if  else  while  for  to  step  fun  return  break  continue  int  real  char
+if  else  while  for  to  step  fun  return  break  continue  int  real  char  uses
 ```
 
 `int`, `real` and `char` are keywords but are also the names of the three conversions, which is
@@ -269,6 +269,7 @@ overload 3), and it would not arise if the header used `:` like every other sepa
 ```
 Program        ::= { Declaration | FunctionDef }
 
+Uses           ::= "uses" Identifier { "," Identifier }
 Declaration    ::= Type Identifier { "[" Expression "]" } [ ":" Initializer ]
 Type           ::= "int" | "real" | "char"
 Initializer    ::= ArrayLiteral | Expression
@@ -613,6 +614,55 @@ There was once a one-word `elseif`. It is gone completely - not a keyword, and
 not a reserved name either, so a program may use `elseif` for a variable if it
 wants one. The language says a thing one way and keeps no seat warm for the
 way it used to say it.
+
+## 7.5.1 `uses` — borrowing a library function
+
+```
+uses sin, cos, tan
+```
+
+Shalimar has no maths functions of its own. `sin`, `sqrt`, `abs` and the rest
+are the C library's, and a file may call one **only if it says so**. Global
+space, several names to a line, several lines to a file.
+
+**Why ask.** Thirteen words are reserved and no more. Making forty library
+functions available by default would take forty names from every program that
+never wanted one; `uses` takes none. `fmod` is an ordinary identifier — usable
+for a variable — in every file that does not borrow it.
+
+**It is per file.** A file borrows for itself, and a file pulled into another
+program by the search in `CROSSFILE.md` brings its borrows with it, exactly as
+it brings the globals it reads. The caller neither knows nor says what the
+file it calls into reaches for.
+
+**It grants access, not a signature.** The compiler knows each borrowable
+function's arity and types, and checks a call against them as strictly as a
+call to one of your own functions:
+
+```
+uses atan2
+...
+atan2(y)      ->  Error: 'atan2' takes 2, got 1
+```
+
+**A name that is not borrowable is refused where it is asked for**, with the
+reason, rather than at the call or at the link:
+
+```
+uses memset   ->  Error: 'memset' takes a pointer, which Shalimar has no type for
+uses printf   ->  Error: 'printf' takes a variable number of arguments, which
+                         Shalimar has no form for
+```
+
+That boundary is not a list somebody maintains. A function is borrowable when
+its C signature can be written in Shalimar's types, and Shalimar's types are
+`int`, `real`, `char` and arrays of them. Every pointer-taking function in the
+C library falls outside it for the same reason.
+
+**Borrowing something and never calling it is not an error.** It emits nothing.
+
+**Your own function wins.** A file that defines `fun <real> = sin(x: real)`
+calls its own, borrowed or not.
 
 ### 7.6 `while`
 
