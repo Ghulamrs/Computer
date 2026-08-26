@@ -823,13 +823,16 @@ final class Interpreter {
             "sin": sin, "cos": cos, "tan": tan,
             "asin": asin, "acos": acos, "atan": atan,
             "round": { $0.rounded(.toNearestOrAwayFromZero) },
-            "ceil": ceil, "floor": floor, "trunc": trunc
+            "ceil": ceil, "floor": floor, "trunc": trunc,
+            "sinh": sinh, "cosh": cosh, "tanh": tanh,
+            "log10": log10, "log2": log2, "cbrt": cbrt
         ]
         if let function = unary[node.callee] {
             return [.real(function(try number(try evaluate(node.arguments[0]), line)))]
         }
 
-        let binary: [String: (Double, Double) -> Double] = ["atan2": atan2, "pow": pow, "hypot": hypot]
+        let binary: [String: (Double, Double) -> Double] =
+            ["atan2": atan2, "pow": pow, "hypot": hypot, "fmod": fmod]
         if let function = binary[node.callee] {
             let a = try number(try evaluate(node.arguments[0]), line)
             let b = try number(try evaluate(node.arguments[1]), line)

@@ -1050,6 +1050,10 @@ values rather than calls, and reserved outright (see the 2.x note below).
 | `round(x)` | 1 | half away from zero |
 | `ceil(x)` `floor(x)` | 1 | |
 | `trunc(x)` | 1 | toward zero, but stays `real` — see below |
+| `log10(x)` `log2(x)` | 1 | |
+| `cbrt(x)` | 1 | cube root; unlike `pow(x, 1./3.)` it takes negative `x` |
+| `sinh(x)` `cosh(x)` `tanh(x)` | 1 | |
+| `fmod(x,y)` | 2 | same as `x % y` on reals; the sign follows `x` |
 | `max(a,b)` `min(a,b)` | 2 | int in, int out; otherwise real |
 | `len(A)` | 1 | element count of the first dimension; capacity for a string |
 | `int(x)` `real(x)` `char(x)` | 1 | conversions, see below |
@@ -1087,8 +1091,9 @@ its range, while `trunc` stays `real` and so handles any magnitude:
 ? int(3000000000.)        // Error - Cannot convert 3000000000.0 to int
 ```
 
-There is no `fmod`: the `%` operator already does it on reals, with C's sign-follows-the-dividend
-rule. There is no `modf` either — a borrowed function returns exactly one value, and with `trunc` present
+`fmod` and `%` are the same operation on reals, with C's sign-follows-the-dividend rule; `%` needs
+no borrow and `fmod` does, so the operator is the shorter way to say it and the function is there
+for a program that would rather name it. There is no `modf` — a borrowed function returns exactly one value, and with `trunc` present
 it is two lines: `i : trunc(x)` then `f : x - i`.
 
 > **2.x note.** Constants were resolved *last*, behind locals and globals, so a variable of the same

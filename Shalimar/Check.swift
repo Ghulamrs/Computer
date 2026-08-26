@@ -50,6 +50,11 @@ final class Checker {
         "asin": unary, "acos": unary, "atan": unary,
         "round": unary, "ceil": unary, "floor": unary, "trunc": unary,
         "atan2": binary, "pow": binary, "hypot": binary,
+        // Added 2026-08-26. shc reaches libm for these; here they are
+        // Foundation's, which is the same libm underneath.
+        "sinh": unary, "cosh": unary, "tanh": unary,
+        "log10": unary, "log2": unary, "cbrt": unary,
+        "fmod": binary,
         // Generic like max/min rather than unary: an int going in should come back an
         // int. 'abs' was the odd one out - abs(-5) returned 5.0000000 while max(3,4)
         // stayed 4, for no reason a reader could see.
