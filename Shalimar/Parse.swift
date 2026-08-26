@@ -19,6 +19,7 @@ enum ParseError: Error, CustomStringConvertible {
     case AttributeNotAssignable(String)
     case DimNeedsAnAxis
     case UsesNeedsAName
+    case UsesFromALibrary(String)
     case UsesNeedsANameAfterComma
 
     var message: String {
@@ -45,8 +46,10 @@ enum ParseError: Error, CustomStringConvertible {
             return "No '.\(name)' - use .row, .col or .dim(n)"
         case .AttributeNotAssignable(let name):
             return "'.\(name)' is read-only"
+        case .UsesFromALibrary(let name):
+            return "'\(name)' comes from a library - shc can build this program, the app cannot link one"
         case .UsesNeedsAName:
-            return "'uses' needs the name of a library function"
+            return "'uses' needs a library function's name, or a declaration"
         case .UsesNeedsANameAfterComma:
             return "a library function's name must follow the comma"
         case .DimNeedsAnAxis:
@@ -550,6 +553,25 @@ class Parser {
     // with it. The two were briefly out by one line here, saying the same
     // sentence about different places.
     private func parseUses() throws {
+        // The declaration form, `uses <real> = f(a[]: real)`, names a function
+        // a LINK will provide. This has no link and never will, so it reads
+        // the head far enough to say which function, and refuses by name.
+        //
+        // It reads rather than rejecting outright because the two must agree on
+        // what a program IS: a file shc compiles and this cannot run is a
+        // conformance difference to be recorded, not a syntax error to be
+        // reported differently in each.
+        if case .Operator(let op) = peekNextToken().kind, op == "<" {
+            _ = popCurrentToken()                      // uses
+            while tokensAvailable {
+                let t = popCurrentToken()
+                if case .Operator(let o) = t.kind, o == "=" { break }
+            }
+            var name = "the function"
+            if case .Identifier(let id) = peekCurrentToken().kind { name = id }
+            throw ParseError.UsesFromALibrary(name)
+        }
+
         guard isIdentifier(peekNextToken().kind) else { throw ParseError.UsesNeedsAName }
         _ = popCurrentToken()
 
