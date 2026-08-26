@@ -809,8 +809,11 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
     // Lowercased, because the lexer folds case before it compares (TokenKind.swift) - so
     // WHILE is the keyword too, and colouring only "while" would tell the reader that the
     // capital one is an identifier when the language disagrees.
+    // No `elseif`. The language dropped it outright rather than keeping it
+    // reserved, so it is an ordinary name now and colouring it would tell the
+    // reader the opposite of what the lexer does.
     static let keywords: Set<String> = [
-        "if", "elseif", "else", "while", "for", "to", "step", "fun", "return",
+        "if", "else", "while", "for", "to", "step", "fun", "return",
         "break", "continue", "int", "real", "char"
     ]
 

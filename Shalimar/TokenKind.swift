@@ -16,7 +16,7 @@ enum TokenKind: Equatable {
     case BracketOpen, BracketClose
     case Comma, Dot
 
-    case If, ElseIf, Else, While, For, To, Step, Fun, Return
+    case If, Else, While, For, To, Step, Fun, Return
     case Break, Continue
     case Int, Real, Char
 
@@ -59,7 +59,6 @@ let tokenList: [(String, TokenGenerator)] = [
     ("[a-zA-Z_][a-zA-Z0-9_]*", { raw in
         switch raw.lowercased() {
         case "if":     return .If
-        case "elseif": return .ElseIf
         case "else":   return .Else
         case "while":  return .While
         case "for":    return .For

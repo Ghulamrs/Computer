@@ -242,7 +242,7 @@ final class HelpViewController: UIViewController {
       if x > 9 {
         ? "big"
       }
-      elseif x > 2 {
+      else if x > 2 {
         ? "middle"
       }
       else {

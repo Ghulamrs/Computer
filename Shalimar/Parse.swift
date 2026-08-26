@@ -156,7 +156,6 @@ class Parser {
         case .Dot:          return "."
 
         case .If:     return "if"
-        case .ElseIf: return "elseif"
         case .Else:   return "else"
         case .While:  return "while"
         case .For:    return "for"
@@ -521,7 +520,7 @@ class Parser {
 
     // Takes the two words `else if` together, and only together: a bare
     // `else` is left where it is so the branch below still sees it.
-    private func matchSpelledOutElseIf() -> Bool {
+    private func matchElseIf() -> Bool {
         guard peekCurrentToken().kind == .Else, peekNextToken().kind == .If else { return false }
         _ = popCurrentToken()
         _ = popCurrentToken()
@@ -532,12 +531,10 @@ class Parser {
         try consume(.If)
         var branches = [IfNode.Branch(condition: try parseExpression(), body: try parseSubScope())]
 
-        // `else if` is `elseif`. Two spellings of one branch, not two
-        // constructs: `else` may otherwise only be followed by `{`, so
-        // `else` + `if` has no other meaning to collide with, and accepting it
-        // cannot make a valid program mean something new - it only stops one
-        // that was rejected from being rejected. shc reads it the same way.
-        while match(.ElseIf) || matchSpelledOutElseIf() {
+        // A branch is `else if`, in two words. There is no `elseif` - not as
+        // a keyword and not as a reserved name; the word is an ordinary
+        // identifier now, and shc reads it the same way.
+        while matchElseIf() {
             branches.append(IfNode.Branch(condition: try parseExpression(), body: try parseSubScope()))
         }
 

@@ -31,7 +31,7 @@ both files change.
 - Four types: `int`, `real`, `char`, and arrays of them. Text is `char[]`. See [§5](#5-types).
 - Variables are declared with a type. A *scalar* may also be created by assigning to it; an array
   may not, unless the right-hand side is a literal ([§7.1](#71-assignment)).
-- Control flow: `if`/`elseif`/`else`, `while`, two `for` forms, and `break`/`continue`
+- Control flow: `if`/`else if`/`else`, `while`, two `for` forms, and `break`/`continue`
   inside a loop.
 - Functions may return **several** values; the caller captures them with `<a,b> : f(...)`. An array
   cannot be returned — it is passed in and filled, because an array argument is a reference
@@ -121,7 +121,7 @@ Case-sensitive. Keywords are recognized case-insensitively at the lexer level (t
 `lowercased()` before the switch) and can never be used as identifiers:
 
 ```
-if  elseif  else  while  for  to  step  fun  return  break  continue  int  real  char
+if  else  while  for  to  step  fun  return  break  continue  int  real  char
 ```
 
 `int`, `real` and `char` are keywords but are also the names of the three conversions, which is
@@ -302,8 +302,7 @@ MultiAssign    ::= "<" Identifier { "," Identifier } ">" ":" FunctionCall
 
 ReturnStmt     ::= "return" [ Expression | "(" Expression { "," Expression } ")" ]
 
-IfStmt         ::= "if" Expression Block { ElseIf Expression Block } [ "else" Block ]
-ElseIf         ::= "elseif" | "else" "if"
+IfStmt         ::= "if" Expression Block { "else" "if" Expression Block } [ "else" Block ]
 WhileStmt      ::= "while" Expression Block
 ForStmt        ::= "for" Identifier ":" Expression "to" Expression [ "step" Expression ] Block
                  | "for" Identifier "<" Expression [ "step" Expression ] Block
@@ -598,28 +597,22 @@ return (expr, expr, ...)       // two or more - the parentheses are required
 A function that declares outputs must return them on every path; falling off the end is a check
 error. The number returned must match the output list.
 
-### 7.5 `if` / `elseif` / `else`
-
-```
-if cond { ... } elseif cond { ... } else { ... }
-```
-
-Any number of `elseif` branches, at most one `else`. The condition must be a scalar.
-
-`elseif` may also be written as the two words `else if`, which mean exactly the
-same thing:
+### 7.5 `if` / `else`
 
 ```
 if cond { ... } else if cond { ... } else { ... }
 ```
 
-This is a spelling, not a second construct - it produces the same branch and
-the same code. It is unambiguous because `else` may otherwise only be followed
-by `{`, so `else` followed by `if` had no meaning before and could not be a
-valid program. Accepting it therefore cannot change what any existing program
-means; it only stops one that was rejected from being rejected.
+Any number of `else if` branches, at most one `else`. The condition must be a scalar.
 
-Both the interpreter and `shc` read it this way.
+A further branch is `else` followed by `if`. There is nothing new to learn
+there: both words are already keywords and they mean what they mean, which is
+why neither the keyword list nor the grammar has a third name for the pair.
+
+There was once a one-word `elseif`. It is gone completely - not a keyword, and
+not a reserved name either, so a program may use `elseif` for a variable if it
+wants one. The language says a thing one way and keeps no seat warm for the
+way it used to say it.
 
 ### 7.6 `while`
 

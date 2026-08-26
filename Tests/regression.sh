@@ -923,8 +923,8 @@ t "compound assign +:" "6" 'fun <> = main() { x : 5 x +: 1
 ? x }'
 t "compound assign -:" "4" 'fun <> = main() { x : 5 x -: 1
 ? x }'
-t "if / elseif / else" "mid" 'fun <> = main() { x : 5 if x > 9 {
-? "hi" } elseif x > 2 {
+t "if / else if / else" "mid" 'fun <> = main() { x : 5 if x > 9 {
+? "hi" } else if x > 2 {
 ? "mid" } else {
 ? "lo" } }'
 t "while loop" "1 2 3" 'fun <> = main() { i : 1 while i < 4 {
