@@ -47,6 +47,8 @@ both files change.
 ### 1.1 A complete example
 
 ```
+uses abs
+
 fun <real> = invert(a[][]: real) {
   real tol : 1e-30
   real det : 1.0
@@ -582,7 +584,7 @@ The only way to consume more than one returned value. The count must match the f
 list exactly; a mismatch is a check error. Targets that do not exist are created with the declared
 output types.
 
-This works for a built-in too — `<s> : sqrt(16.)` — which returns exactly one value.
+This works for a borrowed function too — `<s> : sqrt(16.)`, in a file that says `uses sqrt` — which returns exactly one value.
 
 > **2.x note.** Arity here was a warning and the program ran on, silently discarding surplus values
 > and leaving surplus variables untouched. It is an error now.
@@ -1027,7 +1029,12 @@ exist.
 
 ---
 
-## 12. Built-in functions and constants
+## 12. Library functions and constants
+
+**Every function in this table must be borrowed before it can be called** —
+`uses sqrt` and so on, per file, as 7.5.1 describes. None of them is available
+by being known. The two constants, `pi` and `e`, are not borrowed: they are
+values rather than calls, and reserved outright (see the 2.x note below).
 
 | Function | Args | Notes |
 |---|---|---|
@@ -1081,8 +1088,8 @@ its range, while `trunc` stays `real` and so handles any magnitude:
 ```
 
 There is no `fmod`: the `%` operator already does it on reals, with C's sign-follows-the-dividend
-rule. There is no `modf` either — builtins return exactly one value, and with `trunc` present it is
-two lines: `i : trunc(x)` then `f : x - i`.
+rule. There is no `modf` either — a borrowed function returns exactly one value, and with `trunc` present
+it is two lines: `i : trunc(x)` then `f : x - i`.
 
 > **2.x note.** Constants were resolved *last*, behind locals and globals, so a variable of the same
 > name shadowed them. That was then made an outright reservation — neither could be declared,

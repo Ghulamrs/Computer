@@ -417,8 +417,17 @@ final class HelpViewController: UIViewController {
     int(2.7) is 2 and int(-2.7) is -2. It never
     rounds.
 
-    BUILT-IN FUNCTIONS
-    ------------------
+    LIBRARY FUNCTIONS
+    -----------------
+    A file borrows what it calls, at the top:
+
+      uses sin, cos, sqrt
+
+    Then it may call them. A file that does not
+    borrow sqrt may use sqrt as a name of its
+    own. int(x), real(x) and char(x) are
+    conversions, not calls, and need no uses.
+
       abs(x)      sqrt(x)     hypot(x,y)
       log(x)      exp(x)
       sin(x)      cos(x)      tan(x)
@@ -450,6 +459,7 @@ final class HelpViewController: UIViewController {
     pi and e are read-only. Neither can be
     declared, assigned, or used as a name.
 
+      uses sin
       ? sin(90. * pi / 180.)      1.0000000
 
     COMMENTS
