@@ -302,7 +302,8 @@ MultiAssign    ::= "<" Identifier { "," Identifier } ">" ":" FunctionCall
 
 ReturnStmt     ::= "return" [ Expression | "(" Expression { "," Expression } ")" ]
 
-IfStmt         ::= "if" Expression Block { "elseif" Expression Block } [ "else" Block ]
+IfStmt         ::= "if" Expression Block { ElseIf Expression Block } [ "else" Block ]
+ElseIf         ::= "elseif" | "else" "if"
 WhileStmt      ::= "while" Expression Block
 ForStmt        ::= "for" Identifier ":" Expression "to" Expression [ "step" Expression ] Block
                  | "for" Identifier "<" Expression [ "step" Expression ] Block
@@ -604,6 +605,21 @@ if cond { ... } elseif cond { ... } else { ... }
 ```
 
 Any number of `elseif` branches, at most one `else`. The condition must be a scalar.
+
+`elseif` may also be written as the two words `else if`, which mean exactly the
+same thing:
+
+```
+if cond { ... } else if cond { ... } else { ... }
+```
+
+This is a spelling, not a second construct - it produces the same branch and
+the same code. It is unambiguous because `else` may otherwise only be followed
+by `{`, so `else` followed by `if` had no meaning before and could not be a
+valid program. Accepting it therefore cannot change what any existing program
+means; it only stops one that was rejected from being rejected.
+
+Both the interpreter and `shc` read it this way.
 
 ### 7.6 `while`
 

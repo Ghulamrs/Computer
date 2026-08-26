@@ -519,11 +519,25 @@ class Parser {
         return false
     }
 
+    // Takes the two words `else if` together, and only together: a bare
+    // `else` is left where it is so the branch below still sees it.
+    private func matchSpelledOutElseIf() -> Bool {
+        guard peekCurrentToken().kind == .Else, peekNextToken().kind == .If else { return false }
+        _ = popCurrentToken()
+        _ = popCurrentToken()
+        return true
+    }
+
     private func parseIf(line: Int) throws -> StmtNode {
         try consume(.If)
         var branches = [IfNode.Branch(condition: try parseExpression(), body: try parseSubScope())]
 
-        while match(.ElseIf) {
+        // `else if` is `elseif`. Two spellings of one branch, not two
+        // constructs: `else` may otherwise only be followed by `{`, so
+        // `else` + `if` has no other meaning to collide with, and accepting it
+        // cannot make a valid program mean something new - it only stops one
+        // that was rejected from being rejected. shc reads it the same way.
+        while match(.ElseIf) || matchSpelledOutElseIf() {
             branches.append(IfNode.Branch(condition: try parseExpression(), body: try parseSubScope()))
         }
 
