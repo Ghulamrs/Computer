@@ -48,7 +48,7 @@ if let parseError = parser.parseError {
     exit(1)
 }
 
-let checker = Checker()
+let checker = Checker(borrowing: parser.borrowed)
 let checkedAST = checker.check(ast)
 for diagnostic in checker.diagnostics {
     print(diagnostic)

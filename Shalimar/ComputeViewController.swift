@@ -1082,7 +1082,7 @@ class ComputeViewController: UIViewController, Storyboarded, UITextViewDelegate,
         // reference argument against the prototype that owns it, resolves every name, and
         // hands back a rewritten AST in which each implicit conversion is a ConvertNode -
         // so the interpreter does no inference of its own.
-        let checker = Checker()
+        let checker = Checker(borrowing: parser.borrowed)
         let checkedAST = checker.check(astNodes)
 
         // Warnings show either way; only errors stop the run. Unlike the other two stages

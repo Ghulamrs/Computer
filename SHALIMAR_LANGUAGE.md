@@ -1031,9 +1031,12 @@ exist.
 
 ## 12. Library functions and constants
 
-**Every function in this table must be borrowed before it can be called** —
-`uses sqrt` and so on, per file, as 7.5.1 describes. None of them is available
-by being known. The two constants, `pi` and `e`, are not borrowed: they are
+**Every library function in this table must be borrowed before it can be
+called** — `uses sqrt` and so on, per file, as 7.5.1 describes. None of them is
+available by being known. The exception is the last row: `int`, `real` and
+`char` are conversions rather than calls, they are spelt with type keywords,
+and `uses int` cannot even be written — `uses` takes an identifier and `int` is
+not one. The two constants, `pi` and `e`, are not borrowed either: they are
 values rather than calls, and reserved outright (see the 2.x note below).
 
 | Function | Args | Notes |

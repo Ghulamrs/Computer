@@ -72,6 +72,20 @@ class Parser {
     var index = 0
     private(set) var parseError: Error?
 
+    /// A name a `uses` clause borrowed, and the line it was asked for on. The line
+    /// travels with the name because a name that cannot be borrowed is reported
+    /// where it was ASKED for, not at the call - which may be pages away.
+    struct Borrow {
+        let name: String
+        let line: Int
+    }
+
+    /// What this file borrows from the C library, in the order it asked. Whether a
+    /// name is borrowable is a question about a table, not about grammar, so the
+    /// parser only collects; the checker answers. Duplicates are kept rather than
+    /// merged - `uses sin` twice is not an error, and the list is read as a set.
+    private(set) var borrowed: [Borrow] = []
+
     private var enclosingPrototype: PrototypeNode?
 
     private var blockDepth = 0
@@ -185,6 +199,7 @@ class Parser {
 
     func parseProgram() -> [Node] {
         index = 0
+        borrowed = []
 
         var nodes = [Node]()
         while tokensAvailable {
@@ -541,11 +556,17 @@ class Parser {
 
     // `uses sin, cos, tan` - what this file borrows from the C library.
     //
-    // The interpreter has every one of these already and links nothing, so it
-    // reads the clause and moves on. It still has to READ it: this and shc must
-    // agree on what a program is, or a file that compiles will not run and the
-    // suite will record the disagreement as the expected answer. See
-    // ../Compiler-S/docs/FOREIGN.md.
+    // The interpreter has every one of these already and links nothing, so a
+    // borrow costs it nothing to grant. It grants it anyway, because `uses` is
+    // not a note to the linker - it is what makes the name mean the library
+    // function at all. Without the clause `sin` is an ordinary identifier, and
+    // the checker refuses the call. This and shc must agree on what a program
+    // is, or a file that compiles will not run and the suite will record the
+    // disagreement as the expected answer. See ../Compiler-S/docs/FOREIGN.md.
+    //
+    // The names go on the list and no further. Whether one is BORROWABLE is a
+    // question about a table, and the table belongs to the checker - so
+    // `uses memset` parses here and is refused there, at the line it names.
     // **Each check happens BEFORE the token it complains about is consumed.**
     // This parser locates an error at whatever token it stopped on, so popping
     // the comma and then objecting would report the line the *next* statement
@@ -576,10 +597,10 @@ class Parser {
         _ = popCurrentToken()
 
         while true {
-            guard isIdentifier(peekCurrentToken().kind) else {
+            guard case .Identifier(let name) = peekCurrentToken().kind else {
                 throw unexpected(peekCurrentToken().kind)
             }
-            _ = popCurrentToken()
+            borrowed.append(Borrow(name: name, line: popCurrentToken().line))
             guard peekCurrentToken().kind == .Comma else { break }
             guard isIdentifier(peekNextToken().kind) else {
                 throw ParseError.UsesNeedsANameAfterComma

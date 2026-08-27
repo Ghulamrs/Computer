@@ -94,25 +94,32 @@ fun <> = main() {
 t "user fn may reuse a builtin name and wins" "999" 'fun <real> = sqrt(x: real) { return 999. }
 fun <> = main() {
 ? sqrt(16.) }'
-t "the builtin is there when nobody claims it" "4.0000000" 'fun <> = main() {
+t "the builtin is there when nobody claims it" "4.0000000" 'uses sqrt
+fun <> = main() {
 ? sqrt(16.) }'
-t "builtin rejects string arg" "Cannot use char[] where real is required" 'fun <> = main() {
+t "builtin rejects string arg" "Cannot use char[] where real is required" 'uses sqrt
+fun <> = main() {
 ? sqrt("hi") }'
 # Under-supplying a builtin used to trap on args[0] and take the whole app down
 # (SIGTRAP, uncatchable, no diagnostic). 3.0 catches it a stage earlier still - the
 # checker refuses the program, so nothing runs at all.
-t "builtin too few args, 1-arity" "'sqrt' takes 1, got 0" 'fun <> = main() {
+t "builtin too few args, 1-arity" "'sqrt' takes 1, got 0" 'uses sqrt
+fun <> = main() {
 ? sqrt() }'
-t "builtin too few args, 2-arity" "'pow' takes 2, got 1" 'fun <> = main() {
+t "builtin too few args, 2-arity" "'pow' takes 2, got 1" 'uses pow
+fun <> = main() {
 ? pow(2.) }'
-t "builtin too few args, zero-arity call" "'atan2' takes 2, got 0" 'fun <> = main() {
+t "builtin too few args, zero-arity call" "'atan2' takes 2, got 0" 'uses atan2
+fun <> = main() {
 ? atan2() }'
-t "builtin under-supply is a check error" "'min' takes 2, got 1" 'fun <> = main() {
+t "builtin under-supply is a check error" "'min' takes 2, got 1" 'uses min
+fun <> = main() {
 ? "before"
 ? min(1.) }'
 # 3.0: surplus arguments are an error. 2.x warned and dropped them, which meant a
 # call with the arguments in the wrong order still ran and returned a wrong number.
-t "builtin extra args rejected" "'sqrt' takes 1, got 2" 'fun <> = main() {
+t "builtin extra args rejected" "'sqrt' takes 1, got 2" 'uses sqrt
+fun <> = main() {
 ? sqrt(16.,99.) }'
 t "too few args errors" "'f' takes 2, got 1" 'fun <real> = f(a: real, b: real) { return a+b }
 fun <> = main() {
@@ -199,6 +206,105 @@ t "multi-argument call" "7" 'fun <int> = f(a: int, b: int) { return a+b }
 fun <> = main() {
 ? f(3,4) }'
 
+# ------------------------------------------- 7.5.1 uses - borrowing a library function
+# A library function is not available by being known; it is available by being asked
+# for. Before this, all twenty were in scope in every program and cost every program
+# their names. `uses sqrt` buys one name for one file, and a file that borrows nothing
+# may call its own variable sqrt, fmod or len.
+#
+# shc gates the same way - ../Compiler-S/docs/FOREIGN.md - and the two must agree on
+# which programs are legal, because the differential suite over there records THIS
+# interpreter's answers as the expected ones. A disagreement here is not caught there;
+# it is certified there.
+t "uses grants the call" "4.0000000" 'uses sqrt
+fun <> = main() {
+? sqrt(16.) }'
+t "an unborrowed library call is refused" "add 'uses sqrt' above to call it" 'fun <> = main() {
+? sqrt(16.) }'
+t "len must be borrowed like the rest" "add 'uses len' above to call it" 'fun <> = main() { real A[3]
+? len(A) }'
+# Not "Unknown function": this app has one file and nowhere else to look, so the reason
+# is already known and saying it beats making the reader guess. shc, which does have
+# other files to search, reports the name missing like any other - a divergence in
+# wording only. Both refuse the same program.
+t "a genuinely unknown name still says Unknown" "Unknown function 'wibble'" 'fun <> = main() {
+? wibble(1) }'
+
+# Rule 4: borrowing something and never calling it costs nothing and is not an error.
+t "borrowed and never called is fine" "1" 'uses sin, cos, tan
+fun <> = main() {
+? 1 }'
+t "several clauses, interleaved with globals" "0.4794255 0.5463025" 'uses sin
+real half : 0.5
+uses tan
+fun <> = main() {
+? sin(half) tan(half) }'
+t "borrowing the same name twice is fine" "0.0000000" 'uses sin
+uses sin
+fun <> = main() {
+? sin(0.) }'
+
+# Rule 3, which is the whole point of asking: a name nobody borrowed is an ordinary
+# identifier, free for a variable.
+t "an unborrowed name is an ordinary variable" "2.5000000" 'fun <> = main() {
+real fmod : 2.5
+? fmod }'
+# And your own function still wins over a name you also borrowed.
+t "the file own function wins over its borrow" "999" 'uses sqrt
+fun <real> = sqrt(x: real) { return 999. }
+fun <> = main() {
+? sqrt(16.) }'
+
+# The three conversions are not library functions and need no borrow - nor could they
+# have one: int is a keyword, and uses takes an identifier, so it cannot be spelt.
+t "conversions need no borrow" "2 3.0000000 J" 'fun <> = main() {
+? int(2.7) real(3) char(74) }'
+t "uses int is not spellable" "needs a library function" 'uses int
+fun <> = main() {
+? 1 }'
+
+# The boundary is the table, and the table is honest rather than a matter of policy: a
+# row exists only where the C signature can be written in int, real, char and arrays of
+# them. A name outside it is refused where it is ASKED for, with the reason - not at the
+# call, and not left to a link this app does not have.
+t "a pointer function is refused by name" "'memset' takes a pointer" 'uses memset
+fun <> = main() {
+? 1 }'
+t "a variadic function is refused by name" "'printf' takes a variable number" 'uses printf
+fun <> = main() {
+? 1 }'
+t "a two-output function is told the Shalimar shape" "two-output 'fun' is the Shalimar shape" 'uses modf
+fun <> = main() {
+? 1 }'
+t "a name in no table at all is refused plainly" "is not a library function Shalimar knows" 'uses wibble
+fun <> = main() {
+? 1 }'
+# At the line the NAME is on, not the line the clause starts on. shc keeps the name's
+# own line too, and the two were briefly out by one here.
+t "refused at the line the name is on" "line 2: 'memset'" 'uses sin,
+memset
+fun <> = main() {
+? sin(0.) }'
+# Checked before the search for main(), so a program missing both still hears about the
+# borrow it cannot have rather than only about main.
+t "a borrow is checked even with no main" "'printf' takes a variable number" 'uses printf
+fun <> = f() {
+? 1 }'
+
+# The clause itself, as the parser reads it.
+t "uses needs a name" "needs a library function" 'uses
+fun <> = main() {
+? 1 }'
+t "uses needs a name after the comma" "must follow the comma" 'uses sin,
+fun <> = main() {
+? 1 }'
+# The foreign-declaration form is shc's to link and this app's to refuse, by name -
+# a stated divergence in ../Compiler-S/docs/CONFORMANCE.md, not a defect. There is no
+# link step here and there never will be.
+t "a foreign declaration is refused by name" "'c_total' comes from a library" 'uses <real> = c_total(a[]: real)
+fun <> = main() {
+? 1 }'
+
 # ------------------------------------------------- 7 results / multi-assign arity
 # 3.0: mismatched multi-assign arity is a check error. 2.x warned and carried on,
 # silently discarding surplus values and leaving surplus variables untouched.
@@ -225,11 +331,14 @@ fun <> = main() { f()
 ? 5 }'
 # A builtin has no PrototypeNode, so the arity and define steps used to be skipped
 # entirely - '<s> : sqrt(16.)' left s undeclared and the next line called it undefined.
-t "builtin single multi-assign" "4.0" 'fun <> = main() { <s> : sqrt(16.)
+t "builtin single multi-assign" "4.0" 'uses sqrt
+fun <> = main() { <s> : sqrt(16.)
 ? s }'
-t "builtin multi-assign arity" "returns 1, not 2" 'fun <> = main() { <s,t> : sqrt(16.)
+t "builtin multi-assign arity" "returns 1, not 2" 'uses sqrt
+fun <> = main() { <s,t> : sqrt(16.)
 ? s }'
-t "builtin multi-assign into declared" "4.0" 'fun <> = main() { real s : 0.
+t "builtin multi-assign into declared" "4.0" 'uses sqrt
+fun <> = main() { real s : 0.
 <s> : sqrt(16.)
 ? s }'
 
@@ -265,7 +374,8 @@ t "pi carries full precision" "3.141592653589793" 'fun <> = main() {
 ? prec(15) pi }'
 t "pi in arithmetic" "12.5663706" 'fun <> = main() { real r : 2.
 ? pi * r * r }'
-t "degrees to radians" "1.0000000" 'fun <> = main() { real d : 90.
+t "degrees to radians" "1.0000000" 'uses sin
+fun <> = main() { real d : 90.
 ? sin(d * pi / 180.) }'
 t "pi cannot be assigned" "'pi' is a constant" 'fun <> = main() { pi : 3.
 ? pi }'
@@ -283,26 +393,34 @@ t "pi cannot be a loop counter" "'pi' is a constant" 'fun <> = main() { for pi <
 
 # exp/hypot/trunc, added alongside 'e'. trunc is not int(): it truncates the same way
 # but stays real, so it handles magnitudes int() has to refuse.
-t "exp" "2.7182818" 'fun <> = main() {
+t "exp" "2.7182818" 'uses exp
+fun <> = main() {
 ? exp(1.) }'
-t "exp inverts log" "2.5000000" 'fun <> = main() {
+t "exp inverts log" "2.5000000" 'uses log, exp
+fun <> = main() {
 ? log(exp(2.5)) }'
-t "hypot" "5.0000000" 'fun <> = main() {
+t "hypot" "5.0000000" 'uses hypot
+fun <> = main() {
 ? hypot(3.,4.) }'
-t "trunc stays real" "2.0000000 -2.0000000" 'fun <> = main() {
+t "trunc stays real" "2.0000000 -2.0000000" 'uses trunc
+fun <> = main() {
 ? trunc(2.7) trunc(-2.7) }'
-t "trunc past int range" "3000000000.0000000" 'fun <> = main() {
+t "trunc past int range" "3000000000.0000000" 'uses trunc
+fun <> = main() {
 ? trunc(3000000000.7) }'
 t "int() still refuses that" "Cannot convert" 'fun <> = main() {
 ? int(3000000000.) }'
 # abs is generic like max/min now - an int in, an int out. It used to be declared unary,
 # so abs(-5) came back 5.0000000 while max(3,4) stayed 4.
-t "abs of an int stays int" "5" 'fun <> = main() { n : -5
+t "abs of an int stays int" "5" 'uses abs
+fun <> = main() { n : -5
 ? abs(n) }'
-t "abs of a real stays real" "5.5000000" 'fun <> = main() {
+t "abs of a real stays real" "5.5000000" 'uses abs
+fun <> = main() {
 ? abs(-5.5) }'
 # Swift's abs() traps on Int32.min, which is the uncatchable class - it must report.
-t "abs(Int32.min) reports" "overflows int" 'fun <> = main() { n : -2147483647
+t "abs(Int32.min) reports" "overflows int" 'uses abs
+fun <> = main() { n : -2147483647
 n : n - 1
 ? abs(n) }'
 # 'e' was withheld through early 3.0, on the reasoning that exponent notation owns that
@@ -314,7 +432,8 @@ t "e is a constant" "2.7182818" 'fun <> = main() {
 ? e }'
 t "e cannot be assigned" "'e' is a constant" 'fun <> = main() { e : 5
 ? e }'
-t "log(e) is 1" "1.0000000" 'fun <> = main() {
+t "log(e) is 1" "1.0000000" 'uses log
+fun <> = main() {
 ? log(e) }'
 
 # ------------------------------------------- strings: compare, order, concatenate
@@ -585,7 +704,8 @@ t "int() rejects an array" "needs one value, not real[]" 'fun <> = main() { real
 ? int(A) }'
 t "int() rejects a string" "needs one value, not char[]" 'fun <> = main() {
 ? int("hi") }'
-t "int() out of range reports" "Cannot convert" 'fun <> = main() {
+t "int() out of range reports" "Cannot convert" 'uses pow
+fun <> = main() {
 ? int(pow(10.,30.)) }'
 t "int() of nan reports" "Cannot convert nan" 'fun <> = main() {
 ? int(0./0.) }'
@@ -688,7 +808,8 @@ t "dimensions of a reference parameter" "3 4" 'fun <> = show(M[][]: real) {
 ? M.row M.col }
 fun <> = main() { real A[3][4]
 show(A) }'
-t "row agrees with len" "3 3" 'fun <> = main() { real A[3][4]
+t "row agrees with len" "3 3" 'uses len
+fun <> = main() { real A[3][4]
 ? len(A) A.row }'
 # The dimensions are measured, not declared, so a row replaced at run time reports its
 # real length rather than the one the declaration asked for.
@@ -783,26 +904,33 @@ real m[k-2][4]
 t "computed negative extent traps" "size must be 1 or more, got -3" 'fun <> = main() { k : 2
 real m[k-5]
 ? 1 }'
-t "computed extent names the array" "'w': size must be" 'fun <> = f(v[]: real) { real w[len(v)-9]
+t "computed extent names the array" "'w': size must be" 'uses len
+fun <> = f(v[]: real) { real w[len(v)-9]
 ? 1 }
 fun <> = main() { real p[3] : {1.,2.,3.}
 f(p) }'
-t "literal extent still legal" "3" 'fun <> = main() { real A[3]
+t "literal extent still legal" "3" 'uses len
+fun <> = main() { real A[3]
 ? len(A) }'
-t "folded extent still legal" "6" 'fun <> = main() { real A[2*3]
+t "folded extent still legal" "6" 'uses len
+fun <> = main() { real A[2*3]
 ? len(A) }'
-t "len() extent still legal" "5" 'fun <> = f(v[]: real) { real A[len(v)]
+t "len() extent still legal" "5" 'uses len
+fun <> = f(v[]: real) { real A[len(v)]
 ? len(A) }
 fun <> = main() { real v[5] : {1.,2.,3.,4.,5.}
 f(v) }'
 # len() is capacity for every array, a string included. It used to report a string'"'"'s
 # content length, which gave it two domains: never 0 for a numeric array, but 0 for an
 # empty string - so "real w[len(s)]" failed on a value that was not a mistake.
-t "len of a string is capacity" "8" 'fun <> = main() { char s[8] : "abc"
+t "len of a string is capacity" "8" 'uses len
+fun <> = main() { char s[8] : "abc"
 ? len(s) }'
-t "len of an empty string" "8" 'fun <> = main() { char s[8] : ""
+t "len of an empty string" "8" 'uses len
+fun <> = main() { char s[8] : ""
 ? len(s) }'
-t "len() is never 0" "4" 'fun <> = main() { char s[4] : ""
+t "len() is never 0" "4" 'uses len
+fun <> = main() { char s[4] : ""
 real w[len(s)]
 ? len(w) }'
 
@@ -950,7 +1078,8 @@ t "real division by zero is inf" "inf" 'fun <> = main() {
 ? 1./0. }'
 # Int(Double) traps - uncatchably - on NaN/infinity/out-of-range, and a builtin result
 # reaches these bounds directly. Each of these used to kill the process with no output.
-t "NaN loop end" "Loop end out of range" 'fun <> = main() { for i:1. to sqrt(0.-1.) {
+t "NaN loop end" "Loop end out of range" 'uses sqrt
+fun <> = main() { for i:1. to sqrt(0.-1.) {
 ?? i } }'
 t "infinite loop end" "Loop end out of range" 'fun <> = main() { for i:1. to 1./0. {
 ?? i } }'
@@ -958,7 +1087,8 @@ t "NaN loop start" "Loop start out of range" 'fun <> = main() { for i:0./0. to 5
 ?? i } }'
 t "NaN loop step" "Loop step out of range" 'fun <> = main() { for i:1. to 5. step 0./0. {
 ?? i } }'
-t "out-of-Int-range loop end" "Loop end out of range" 'fun <> = main() { for i:1. to pow(10.,400.) {
+t "out-of-Int-range loop end" "Loop end out of range" 'uses pow
+fun <> = main() { for i:1. to pow(10.,400.) {
 ?? i } }'
 t "bad bound reports, not traps" "before  Error: line 3: Loop end" 'fun <> = main() {
 ? "before"
@@ -1010,7 +1140,8 @@ fun <> = main() {
 t "return out of while" "3" 'fun <int> = f() { i : 0 while i < 9 { i +: 1 if i = 3 { return i } } return 0 }
 fun <> = main() {
 ? f() }'
-t "quadratic program" "Solution 1.0000000 1.0000000" 'fun <> = main() {
+t "quadratic program" "Solution 1.0000000 1.0000000" 'uses sqrt
+fun <> = main() {
    a : 1.
    b : -2.
    c : 1.
@@ -1218,7 +1349,8 @@ t "bare call after print keeps order" "label  inside" 'fun <> = hi() {
 fun <> = main() {
 ? "label"
 hi() }'
-t "call still works as an item" "root 4.0" 'fun <> = main() {
+t "call still works as an item" "root 4.0" 'uses sqrt
+fun <> = main() {
 ? "root" sqrt(16.) }'
 t "items still run to end of line" "x 3 sq 9" 'fun <> = main() { x : 3
 ? "x" x "sq" x*x }'

@@ -773,6 +773,12 @@ final class Interpreter {
         }
     }
 
+    // **No `uses` check here, and that is deliberate.** A library function is callable
+    // only in a file that borrowed it, but the borrow list is the checker's and the
+    // gate is at Check.checkCall: an unborrowed name never reaches a running program,
+    // because both the app and the harness refuse to run once the checker reports an
+    // error. Testing it a second time here would be a second place to keep in step
+    // with the table, and the only way to reach it would be a bug in the first.
     private func callBuiltin(_ node: CallNode) throws -> [Value]? {
         let line = node.line
 

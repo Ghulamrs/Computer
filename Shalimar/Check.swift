@@ -15,6 +15,19 @@ struct Diagnostic: CustomStringConvertible {
 final class Checker {
     private(set) var diagnostics: [Diagnostic] = []
 
+    // What the file's `uses` clauses asked for, with the line each name was asked on,
+    // and the same names as a set for the call site to test against. The argument has
+    // no default on purpose: a Checker built without it would refuse every library
+    // call in the program, which is a failure worth a compile error at a new call site
+    // rather than a wrong answer at run time.
+    private let borrowed: [Parser.Borrow]
+    private let borrows: Set<String>
+
+    init(borrowing borrowed: [Parser.Borrow]) {
+        self.borrowed = borrowed
+        self.borrows = Set(borrowed.map { $0.name })
+    }
+
     private var prototypes: [String: PrototypeNode] = [:]
     private var globals: [String: ShalimarType] = [:]
     // Globals not yet reached by the file-order walk, with the line each is declared on.
@@ -81,7 +94,33 @@ final class Checker {
         "int": .int, "real": .real, "char": .char,
     ]
 
+    // Names a person will reasonably try in a `uses` clause, and why each one cannot
+    // be borrowed. Not a blocklist: every entry is refused because its C signature
+    // needs a type Shalimar does not have, and saying WHICH type is the difference
+    // between an answer and a refusal. A person who writes 'uses memset' is not being
+    // unreasonable - they are asking whether the door is wider than it is.
+    //
+    // The list is short on purpose. It turns the likeliest mistakes into instructions;
+    // anything not on it still gets the plain refusal below, which is true and does not
+    // mislead. Kept in step with shc's own, in ../Compiler-S/src/Builtin.cpp.
+    private static let unborrowable: [String: String] = [
+        "memset": "takes a pointer, which Shalimar has no type for",
+        "memcpy": "takes a pointer, which Shalimar has no type for",
+        "strlen": "takes a pointer, which Shalimar has no type for",
+        "strcpy": "takes a pointer, which Shalimar has no type for",
+        "strcmp": "takes a pointer, which Shalimar has no type for",
+        "malloc": "returns a pointer, which Shalimar has no type for",
+        "free":   "takes a pointer, which Shalimar has no type for",
+        "fopen":  "returns a pointer, which Shalimar has no type for",
+        "qsort":  "takes a function pointer, which Shalimar has no type for",
+        "printf": "takes a variable number of arguments, which Shalimar has no form for",
+        "scanf":  "takes a variable number of arguments, which Shalimar has no form for",
+        "modf":   "writes through a pointer; a two-output 'fun' is the Shalimar shape for it",
+        "frexp":  "writes through a pointer; a two-output 'fun' is the Shalimar shape for it",
+    ]
+
     func check(_ program: [Node]) -> [Node] {
+        checkBorrows()
         collectPrototypes(program)
         collectLaterGlobals(program)
 
@@ -117,6 +156,27 @@ final class Checker {
             }
         }
         return checked
+    }
+
+    // What the file said it borrows, checked before anything else - before even the
+    // search for main() - so that a name it cannot have is reported where it was ASKED
+    // for rather than at the call, which may be pages below it.
+    //
+    // Borrowing something and never calling it is not an error. It costs nothing and
+    // emits nothing, and a file that borrows a set for the program it belongs to
+    // should not be nagged about the two it did not reach for today.
+    //
+    // Borrowing something the file also defines is not an error either: the program's
+    // own function simply wins at the call, and this loop never asks what the program
+    // defines. ../Compiler-S/docs/FOREIGN.md, rules 3 and 4.
+    private func checkBorrows() {
+        for borrow in borrowed where Checker.builtins[borrow.name] == nil {
+            if let why = Checker.unborrowable[borrow.name] {
+                error("'\(borrow.name)' \(why)", borrow.line)
+            } else {
+                error("'\(borrow.name)' is not a library function Shalimar knows", borrow.line)
+            }
+        }
     }
 
     private func collectPrototypes(_ program: [Node]) {
@@ -839,12 +899,30 @@ final class Checker {
         // The program's own function wins. A builtin is what the name means when
         // nothing in the file has claimed it - the rule C gets from headers, said
         // without needing headers to say it.
-        if prototypes[node.callee] == nil, let builtin = Checker.builtins[node.callee] {
+        //
+        // **And only if this file borrowed it.** A library function is not available
+        // by being known; it is available by being asked for, which is the whole of
+        // what `uses` buys - forty names that cost nothing to a program that never
+        // wanted one. The three conversions are exempt and could not be otherwise:
+        // 'int' is a keyword, and `uses` takes an identifier, so 'uses int' cannot be
+        // written at all.
+        if prototypes[node.callee] == nil, let builtin = Checker.builtins[node.callee],
+           borrows.contains(node.callee) || Checker.conversions[node.callee] != nil {
             return checkBuiltinCall(node, builtin, line: line)
         }
         guard let prototype = prototypes[node.callee] else {
             if node.callee.lowercased() == "prec" {
                 error("'prec' belongs after '?'", node.line)
+            } else if Checker.builtins[node.callee] != nil {
+                // shc lets an unborrowed name fall through to the search of the
+                // project's other files, where it is reported missing like any other.
+                // The app has one file and no search, so nothing further can be
+                // learned and the reason is already known - say it, rather than leave
+                // a reader puzzling over 'Unknown function' about a function the
+                // language plainly has. A deliberate divergence in wording only: both
+                // refuse the same program.
+                error("'\(node.callee)' is a library function - add 'uses \(node.callee)' above to call it",
+                      node.line)
             } else {
                 error("Unknown function '\(node.callee)'", node.line)
             }
