@@ -23,9 +23,17 @@ final class Checker {
     private let borrowed: [Parser.Borrow]
     private let borrows: Set<String>
 
+    // The line each name was borrowed on, so refusing it as a variable can say
+    // where the borrow is - the cure is either there or at the variable, and the
+    // reader should not have to hunt for which line took the name.
+    private let borrowedOn: [String: Int]
+
     init(borrowing borrowed: [Parser.Borrow]) {
         self.borrowed = borrowed
         self.borrows = Set(borrowed.map { $0.name })
+        var lines: [String: Int] = [:]
+        for borrow in borrowed where lines[borrow.name] == nil { lines[borrow.name] = borrow.line }
+        self.borrowedOn = lines
     }
 
     private var prototypes: [String: PrototypeNode] = [:]
@@ -209,6 +217,7 @@ final class Checker {
     }
 
     private func declareGlobal(_ declaration: DeclareNode) {
+        _ = refuseBorrowed(declaration.name, declaration.line)
         if globals[declaration.name] != nil {
             error("Variable '\(declaration.name)' already defined", declaration.line)
             return
@@ -288,6 +297,29 @@ final class Checker {
         return true
     }
 
+    // **A borrowed name may not also be a variable** - 7.5.1 rule 3. `fmod` is an
+    // ordinary identifier in every file that does not borrow it, and in a file that
+    // does, the name is spoken for: `real fmod : 2.5` beside `fmod(7.5, 2.0)` is one
+    // name meaning two things in one file, which is exactly the hazard the language
+    // named when it refused `pi : 3`.
+    //
+    // Stricter than a constant, which may be had by declaring it. There is no
+    // declaring your way out of this one, because the borrow has already claimed the
+    // name for the file - the cure is to drop the borrow or rename the variable, and
+    // the message names both by naming both lines.
+    //
+    // It does not matter whether the `uses` is above or below: a borrow is per FILE,
+    // and the parser has collected every one of them before this stage begins.
+    // **Every caller reports and carries on**, rather than bailing. Returning early
+    // left the name undefined, so each later mention drew a second diagnostic -
+    // 'fmod' is borrowed, then Undefined variable 'fmod' at a line that is not the
+    // mistake. One mistake, one message.
+    private func refuseBorrowed(_ name: String, _ line: Int) -> Bool {
+        guard let asked = borrowedOn[name] else { return false }
+        error("'\(name)' is borrowed on line \(asked) - drop the borrow or use another name", line)
+        return true
+    }
+
     private func isLocal(_ name: String) -> Bool {
         scopes.contains { $0[name] != nil }
     }
@@ -313,6 +345,7 @@ final class Checker {
         defer { currentPrototype = nil; scopes = []; declaredLocals = [] }
 
         for parameter in function.prototype.inputs {
+            _ = refuseBorrowed(parameter.name, function.line)
             if scopes[0][parameter.name] != nil {
                 error("Parameter '\(parameter.name)' already defined", function.line)
             }
@@ -396,6 +429,8 @@ final class Checker {
     private func checkDeclaration(_ node: DeclareNode) -> StmtNode {
         checkDeclaredType(node)
 
+        _ = refuseBorrowed(node.name, node.line)
+
         // 'isLocal' answers for the scopes still open - a parameter, or a declaration
         // in a block this one sits inside. 'declaredLocals' answers for the ones that
         // have closed, which is how a second `int t` in a sibling block is caught: a
@@ -454,6 +489,7 @@ final class Checker {
     private func checkAssign(_ node: AssignNode) -> StmtNode {
         let target = resolveTarget(node.target, line: node.line)
         if refuseConstant(target.root, "assigned to", node.line) { return node }
+        _ = refuseBorrowed(target.root, node.line)
 
         guard let targetType = target.type else {
             let type = infer(node.expr, line: node.line)
@@ -481,6 +517,7 @@ final class Checker {
     private func checkCompoundAssign(_ node: CompoundAssignNode) -> StmtNode {
         let target = resolveTarget(node.target, line: node.line)
         if refuseConstant(target.root, "assigned to", node.line) { return node }
+        _ = refuseBorrowed(target.root, node.line)
         guard let targetType = target.type else {
             reportUndefined(target.root, node.line)
             return node
@@ -518,6 +555,7 @@ final class Checker {
                 }
                 if let first = node.targets.first {
                     let resolved = resolveTarget(first, line: node.line)
+                    _ = refuseBorrowed(resolved.root, node.line)
                     if resolved.type == nil { define(resolved.root, callType) }
                 }
             }
@@ -528,6 +566,7 @@ final class Checker {
         }
         for (i, target) in node.targets.enumerated() where i < prototype.outputs.count {
             let resolved = resolveTarget(target, line: node.line)
+            _ = refuseBorrowed(resolved.root, node.line)
             if let existing = resolved.type {
                 if existing != prototype.outputs[i] {
                     error("'\(resolved.root)' is \(existing), not \(prototype.outputs[i])", node.line)
@@ -590,6 +629,7 @@ final class Checker {
         warnIfEmpty(node)
 
         _ = refuseConstant(node.variable, "used as a loop counter", node.line)
+        _ = refuseBorrowed(node.variable, node.line)
         scopes.append([node.variable: counterType])
         let body = node.body.map { checkStatement($0) }
         scopes.removeLast()

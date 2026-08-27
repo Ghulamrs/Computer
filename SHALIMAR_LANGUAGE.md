@@ -677,6 +677,22 @@ its C signature can be written in Shalimar's types, and Shalimar's types are
 `int`, `real`, `char` and arrays of them. Every pointer-taking function in the
 C library falls outside it for the same reason.
 
+**A borrowed name may not also be a variable.** In a file that says `uses fmod`,
+`fmod` is the library function and nothing else — it cannot be declared, assigned,
+taken as a parameter, used as a loop counter, or made a multi-assign target:
+
+```
+uses fmod
+real fmod : 2.5   ->  Error: 'fmod' is borrowed on line 1 - drop the borrow or use
+                             another name
+```
+
+The cure is at one line or the other, which is why the message names both. This is
+stricter than a constant — `pi` may be had by declaring it — because a borrow has
+already claimed the name for the whole file. And it is per file: a file that does
+not borrow `fmod` may use the name however it likes, including one that calls into
+a file that does.
+
 **Borrowing something and never calling it is not an error.** It emits nothing.
 
 **Your own function wins.** A file that defines `fun <real> = sin(x: real)`

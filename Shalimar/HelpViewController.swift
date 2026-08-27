@@ -469,6 +469,16 @@ final class HelpViewController: UIViewController {
     defines its own sqrt calls that one -
     borrowed or not.
 
+    But a file that DOES borrow a name cannot
+    also use it for a variable - the name is
+    spoken for:
+
+      uses fmod
+      real fmod : 2.5
+      Error: line 2: 'fmod' is borrowed on
+      line 1 - drop the borrow or use another
+      name
+
     Borrowing something and never calling it is
     not an error. It costs nothing.
 

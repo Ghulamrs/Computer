@@ -305,6 +305,57 @@ t "a foreign declaration is refused by name" "'c_total' comes from a library" 'u
 fun <> = main() {
 ? 1 }'
 
+# Rule 3: a borrowed name may not also be a variable. `fmod` is an ordinary
+# identifier in every file that does not borrow it, and in one that does the name is
+# spoken for - `real fmod` beside `fmod(7.5, 2.0)` would be one name meaning two
+# things in one file, which is the hazard the language named when it refused `pi : 3`.
+#
+# Stricter than a constant, which may be had by declaring it: a borrow has already
+# claimed the name, so there is no declaring your way out of it. Six places introduce
+# a name and all six are guarded.
+t "borrowed name as a local" "'fmod' is borrowed on line 1" 'uses fmod
+fun <> = main() { real fmod : 2.5
+? fmod }'
+t "borrowed name as a global" "'fmod' is borrowed on line 1" 'uses fmod
+real fmod : 2.5
+fun <> = main() {
+? fmod }'
+t "borrowed name as a parameter" "'fmod' is borrowed on line 1" 'uses fmod
+fun <real> = g(fmod: real) { return fmod }
+fun <> = main() {
+? g(2.5) }'
+t "borrowed name by assignment" "'fmod' is borrowed on line 1" 'uses fmod
+fun <> = main() { fmod : 2.5
+? fmod }'
+t "borrowed name as a loop counter" "'fmod' is borrowed on line 1" 'uses fmod
+fun <> = main() {
+for fmod : 1 to 2 {
+? fmod } }'
+t "borrowed name as a multi-assign target" "'sqrt' is borrowed on line 1" 'uses sqrt
+fun <> = main() {
+<sqrt> : sqrt(16.) }'
+# The clause is per FILE, so where it sits does not matter - the parser has collected
+# every borrow before the checker starts.
+t "the uses may sit below the variable" "'fmod' is borrowed on line 3" 'fun <> = main() { real fmod : 2.5
+? fmod }
+uses fmod'
+# One mistake, one message. Refusing the name and then leaving it undefined gave
+# "'fmod' is borrowed" followed by "Undefined variable 'fmod'" a line later, pointing
+# at something that was not the mistake.
+t "the refusal does not cascade" "Undefined variable" 'uses fmod
+fun <> = main() { real fmod : 2.5
+? fmod
+? nowhere }'
+# And the whole point of asking: the name is free in a file that never borrowed it.
+t "not borrowed, so free for a variable" "2.5000000" 'fun <> = main() { real fmod : 2.5
+? fmod }'
+t "not borrowed, so free as a counter" "1  2" 'fun <> = main() {
+for fmod : 1 to 2 {
+? fmod } }'
+t "borrowing and only calling is fine" "1.5000000" 'uses fmod
+fun <> = main() {
+? fmod(7.5, 2.0) }'
+
 # ------------------------------------------------- 7 results / multi-assign arity
 # 3.0: mismatched multi-assign arity is a check error. 2.x warned and carried on,
 # silently discarding surplus values and leaving surplus variables untouched.
