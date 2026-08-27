@@ -1095,6 +1095,12 @@ values rather than calls, and reserved outright (see the 2.x note below).
 
 Argument counts are enforced exactly, for built-ins as for user functions.
 
+**This table is the whole of what exists**, and a name outside it is refused where it is asked
+for. The boundary it sits inside is wider: about sixty C functions have signatures writable in
+`int`, `real`, `char` and arrays of them, and `Compiler-S/docs/FOREIGN.md` lists the
+thirty-three measured candidates with the traps among them. That list is a record of what
+*could* be added, not of what a program may call — `uses asinh` is an error today.
+
 **A user function may take a built-in's name, and wins.** `fun <real> = sqrt(x: real)` makes `sqrt`
 the program's for the whole file and the built-in is simply not there — the rule C gets from
 headers, where `sin` is `<math.h>`'s until a file declares its own, said here without headers to say
