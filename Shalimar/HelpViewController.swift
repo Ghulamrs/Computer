@@ -79,8 +79,8 @@ final class HelpViewController: UIViewController {
     Press the green arrow to run. Messages
     appear in the console below the editor.
 
-    TWO RULES THAT CATCH EVERYONE
-    -----------------------------
+    THREE RULES THAT CATCH EVERYONE
+    -------------------------------
     1. A print command opens its line. Nothing
        may come before it on that line.
 
@@ -97,6 +97,19 @@ final class HelpViewController: UIViewController {
            }
            ? c
          }
+
+    3. A file borrows the library functions it
+       calls, at the top. sqrt is not there
+       until the file asks for it.
+
+         uses sqrt
+         fun <> = main() {
+           ? sqrt(16.)
+         }
+
+       Leave the first line out and the call
+       is refused - and the message names the
+       line to add.
 
     TYPES
     -----
@@ -419,14 +432,39 @@ final class HelpViewController: UIViewController {
 
     LIBRARY FUNCTIONS
     -----------------
-    A file borrows what it calls, at the top:
+    Shalimar has no maths functions of its own.
+    These are the machine's, the same ones any
+    other program on it calls. A file may reach
+    one only if it says so, at the top:
 
       uses sin, cos, sqrt
 
-    Then it may call them. A file that does not
-    borrow sqrt may use sqrt as a name of its
-    own. int(x), real(x) and char(x) are
-    conversions, not calls, and need no uses.
+    Then it may call those three, and no
+    others.
+
+      uses sqrt
+      fun <> = main() {
+        ? sqrt(16.)         4.0000000
+      }
+
+    Without the uses line:
+
+      Error: line 2: 'sqrt' is a library
+      function - add 'uses sqrt' above to
+      call it
+
+    None of these names is a keyword, and that
+    is the point of asking. A file that does
+    not borrow sqrt may use sqrt for a variable
+    or a function of its own, and a file that
+    defines its own sqrt calls that one -
+    borrowed or not.
+
+    Borrowing something and never calling it is
+    not an error. It costs nothing.
+
+    int(x), real(x) and char(x) are conversions
+    rather than calls, and need no uses.
 
       abs(x)      sqrt(x)     hypot(x,y)
       log(x)      exp(x)
@@ -440,9 +478,22 @@ final class HelpViewController: UIViewController {
       fmod(x,y)
       max(a,b)    min(a,b)
       len(A)
-      int(x)      real(x)     char(x)
 
-    Angles are in radians.
+    Angles are in radians. len(A) is borrowed
+    like the rest.
+
+    A name outside this table is refused where
+    you ask for it, and told why:
+
+      uses memset
+      Error: line 1: 'memset' takes a pointer,
+      which Shalimar has no type for
+
+    That edge is not a list somebody keeps. A
+    function can be borrowed when its shape can
+    be written in int, real, char and arrays of
+    them - so every function taking a pointer
+    falls outside it, for the one reason.
 
     hypot(x,y) is sqrt(x*x + y*y) without the
     overflow. exp(x) is the inverse of log(x).
