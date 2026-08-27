@@ -285,7 +285,7 @@ Parameter      ::= [ "&" ] Identifier { "[" "]" } ":" Type
 
 Block          ::= "{" { Statement } "}"
 
-Statement      ::= Declaration            (* only at the top level of a function body *)
+Statement      ::= Declaration
                  | Assignment
                  | CompoundAssign
                  | MultiAssign
@@ -451,9 +451,25 @@ real  m[3][3] : {{1.,2.},{3.,4.}}
 int   cube[2][3][5]
 ```
 
-**A declaration may appear only at the top level of a function body, or at global scope.** Inside an
-`if`, `while` or `for` body it is a parse error naming the variable. The rule keeps every local's
-lifetime the whole call, which is what lets the checker type a function in one pass.
+**A declaration may appear wherever a statement may.** Inside an `if`, `while` or `for` body is
+fine, and so is halfway down a function after the work has started — the shape a C program has, so
+a program converted from one does not have to be rearranged to be read.
+
+**What did not change is the lifetime.** A declared local is still the whole call's: one name, one
+variable, one type, from the top of the call to the bottom, which is what lets the checker type a
+function in one pass. Two consequences follow, and they are the whole of the rule:
+
+- **The name is visible only to the end of its block** — exactly the rule a name made by a first
+  assignment has always followed ([§7.1](#71-assignment)). `int t` inside an `if` cannot be read
+  after that `if` closes; it reports `Undefined variable 't'`. Visibility ending with the block is
+  what keeps this stage and the run in step, because the interpreter's box ends with the block too,
+  and a checker that allowed the read would pass a program the run then failed.
+- **Two sibling blocks may not each declare `t`.** The second reports `Variable 't' already
+  defined`. A block-scoped language would make those two different variables; this one does not,
+  because one call has one `t`. A declaration inside a block a surrounding one already declared is
+  refused for the same reason.
+
+A name made by first assignment is unaffected and still belongs to its block alone.
 
 Only declarations and `fun` definitions may appear at global scope; a statement there is an error.
 
@@ -1172,7 +1188,6 @@ Reported one at a time; parsing stops at the first.
 - `Program ends unfinished` — running off the end has no spelling to quote, so it gets a sentence.
 - `Missing '{' to start block` / `Missing '}' to close block`
 - `'?' must start its line`
-- `'x': declare it at the top of the function`
 - `'return' outside a function`
 - `'break' outside a loop` / `'continue' outside a loop`
 - `'?' must be inside a function`

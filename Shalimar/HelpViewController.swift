@@ -79,26 +79,15 @@ final class HelpViewController: UIViewController {
     Press the green arrow to run. Messages
     appear in the console below the editor.
 
-    THREE RULES THAT CATCH EVERYONE
-    -------------------------------
+    TWO RULES THAT CATCH EVERYONE
+    -----------------------------
     1. A print command opens its line. Nothing
        may come before it on that line.
 
          ? "ok"     works
          x : 1 ? x  Error: must start its line
 
-    2. Declarations sit at the top of a
-       function, never inside an if or a loop.
-
-         fun <> = main() {
-           int c : 0
-           for i < 3 {
-             c : c + i
-           }
-           ? c
-         }
-
-    3. A file borrows the library functions it
+    2. A file borrows the library functions it
        calls, at the top. sqrt is not there
        until the file asks for it.
 
@@ -135,6 +124,26 @@ final class HelpViewController: UIViewController {
 
     A size must be a whole number, 1 or more. It
     is fixed when the declaration runs.
+
+    A declaration goes anywhere a statement
+    goes - at the top, halfway down, or inside
+    an if or a loop:
+
+      fun <> = main() {
+        int total : 0
+        for i < 3 {
+          int t : i * 2
+          total +: t
+        }
+        ? total
+      }
+
+    A declared name reaches the end of its
+    block and no further, so t above cannot be
+    read after the loop. And one call has one
+    t: a second block may not declare it again,
+    and neither may a block inside another that
+    already did.
 
     A scalar may also be created by assigning to
     it:

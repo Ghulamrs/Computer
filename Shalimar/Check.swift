@@ -33,6 +33,17 @@ final class Checker {
     // Globals not yet reached by the file-order walk, with the line each is declared on.
     private var laterGlobals: [String: Int] = [:]
     private var scopes: [[String: ShalimarType]] = []
+
+    // Every name the function being checked has DECLARED, at any depth, kept for the
+    // whole function rather than popped with its block.
+    //
+    // A declaration may sit anywhere now, but a declared local still lives for the
+    // whole call - one name, one variable, one type, from the top of the call to the
+    // bottom. So two sibling blocks may not each declare 't': `scopes` cannot see that,
+    // because the first block's scope is popped long before the second is read, and
+    // this is what remembers. Names made by an ordinary first assignment are NOT in
+    // here: those have always belonged to their block and still do.
+    private var declaredLocals: Set<String> = []
     private var currentPrototype: PrototypeNode?
 
     var hasErrors: Bool { diagnostics.contains { $0.severity == .error } }
@@ -298,7 +309,8 @@ final class Checker {
     private func checkFunction(_ function: FunctionNode) -> FunctionNode {
         currentPrototype = function.prototype
         scopes = [[:]]
-        defer { currentPrototype = nil; scopes = [] }
+        declaredLocals = []
+        defer { currentPrototype = nil; scopes = []; declaredLocals = [] }
 
         for parameter in function.prototype.inputs {
             if scopes[0][parameter.name] != nil {
@@ -384,7 +396,11 @@ final class Checker {
     private func checkDeclaration(_ node: DeclareNode) -> StmtNode {
         checkDeclaredType(node)
 
-        if isLocal(node.name) {
+        // 'isLocal' answers for the scopes still open - a parameter, or a declaration
+        // in a block this one sits inside. 'declaredLocals' answers for the ones that
+        // have closed, which is how a second `int t` in a sibling block is caught: a
+        // declared local lives for the whole call, so there is only ever one of it.
+        if isLocal(node.name) || declaredLocals.contains(node.name) {
             error("Variable '\(node.name)' already defined", node.line)
         } else if globals[node.name] != nil {
             warn("'\(node.name)' hides a global", node.line)
@@ -395,7 +411,14 @@ final class Checker {
         if let value = initial {
             initial = coerce(value, to: node.type, line: node.line)
         }
+        // Into the innermost scope, which is what ends the name's VISIBILITY with its
+        // block - the same rule a name made by a first assignment has always followed.
+        // The lifetime is a separate question and is unchanged: the box is the call's.
+        // Refusing the read outside the block is what keeps this stage and the run in
+        // step, because the interpreter's box goes with the block too, and a checker
+        // that let 't' be read after its `if` would pass a program the run then failed.
         define(node.name, node.type)
+        declaredLocals.insert(node.name)
 
         return DeclareNode(type: node.type, name: node.name, sizes: sizes,
                            initial: initial, line: node.line)

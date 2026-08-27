@@ -11,7 +11,6 @@ enum ParseError: Error, CustomStringConvertible {
     case MissingOpeningBrace
     case MissingClosingBrace
     case PrintNotAtLineStart(String)
-    case DeclarationInSubScope(String)
     case ReturnOutsideFunction
     case LoopControlOutsideLoop(String)
     case StatementInGlobalSpace(String)
@@ -34,8 +33,6 @@ enum ParseError: Error, CustomStringConvertible {
             return "Missing '}' to close block"
         case .PrintNotAtLineStart(let cmd):
             return "'\(cmd)' must start its line"
-        case .DeclarationInSubScope(let name):
-            return "'\(name)': declare it at the top of the function"
         case .ReturnOutsideFunction:
             return "'return' outside a function"
         case .LoopControlOutsideLoop(let word):
@@ -88,12 +85,11 @@ class Parser {
 
     private var enclosingPrototype: PrototypeNode?
 
-    private var blockDepth = 0
-
     // Counts the loops a statement is standing inside, which is the whole of what
-    // 'break' and 'continue' need to be legal. Kept apart from blockDepth because
-    // that one counts every sub-scope - an 'if' body raises it, and an 'if' is not
-    // something either word can escape.
+    // 'break' and 'continue' need to be legal. There was a blockDepth beside this
+    // once, counting every sub-scope so that a declaration below the top of a
+    // function could be refused. Declarations may go anywhere now, and nothing else
+    // ever asked how deep the braces were, so it went with the rule.
     private var loopDepth = 0
 
     init(tokens: [Token]) {
@@ -253,10 +249,6 @@ class Parser {
         let scalar = try parseScalarType()
         let name = try readIdentifier()
 
-        guard blockDepth == 0 else {
-            throw ParseError.DeclarationInSubScope(name)
-        }
-
         var sizes = [ExprNode]()
         while peekCurrentToken().kind == .BracketOpen {
             _ = popCurrentToken()
@@ -343,14 +335,11 @@ class Parser {
         let prototype = PrototypeNode(name: name, outputs: outputs, inputs: inputs, line: line)
 
         let previousPrototype = enclosingPrototype
-        let previousDepth = blockDepth
         let previousLoopDepth = loopDepth
         enclosingPrototype = prototype
-        blockDepth = 0
         loopDepth = 0
         defer {
             enclosingPrototype = previousPrototype
-            blockDepth = previousDepth
             loopDepth = previousLoopDepth
         }
 
@@ -389,17 +378,11 @@ class Parser {
         return statements
     }
 
-    private func parseSubScope() throws -> [StmtNode] {
-        blockDepth += 1
-        defer { blockDepth -= 1 }
-        return try parseBody()
-    }
-
     // A loop's own body, which is the only place 'break' and 'continue' mean anything.
     private func parseLoopBody() throws -> [StmtNode] {
         loopDepth += 1
         defer { loopDepth -= 1 }
-        return try parseSubScope()
+        return try parseBody()
     }
 
     func parseStatement() throws -> StmtNode {
@@ -616,18 +599,18 @@ class Parser {
 
     private func parseIf(line: Int) throws -> StmtNode {
         try consume(.If)
-        var branches = [IfNode.Branch(condition: try parseExpression(), body: try parseSubScope())]
+        var branches = [IfNode.Branch(condition: try parseExpression(), body: try parseBody())]
 
         // A branch is `else if`, in two words. There is no `elseif` - not as
         // a keyword and not as a reserved name; the word is an ordinary
         // identifier now, and shc reads it the same way.
         while matchElseIf() {
-            branches.append(IfNode.Branch(condition: try parseExpression(), body: try parseSubScope()))
+            branches.append(IfNode.Branch(condition: try parseExpression(), body: try parseBody()))
         }
 
         var elseBody: [StmtNode]? = nil
         if match(.Else) {
-            elseBody = try parseSubScope()
+            elseBody = try parseBody()
         }
         return IfNode(branches: branches, elseBody: elseBody, line: line)
     }

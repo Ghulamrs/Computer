@@ -1043,6 +1043,63 @@ t "string still prints inline" "name: abc" 'fun <> = main() { char s[8] : "abc"
 t "scalar real is 7 places" "0.3333333" 'fun <> = main() { x : 1./3.
 ? x }'
 
+# ------------------------------------------- 6 declarations sit anywhere in a body
+# The rule was "top of the function, never inside an if or a loop", and it is gone.
+# It was refused in the parser, so it never reached the checker at all.
+#
+# What did NOT change is the lifetime: a declared local is still the whole call's, one
+# name to one variable of one type, which is what lets a function be typed in one pass.
+# So the name is VISIBLE only to the end of its block - the rule a name made by a first
+# assignment has always followed - and two sibling blocks may not each declare it.
+# Visibility ending with the block is what keeps the checker and the run in step: the
+# interpreter's box goes with the block too.
+t "declare inside an if" "8" 'fun <> = main() { int x : 5
+if x > 0 {
+int t : 3
+? x + t } }'
+t "declare inside a loop body" "2  4  6" 'fun <> = main() {
+for i : 1 to 3 {
+int t : i * 2
+? t } }'
+t "declare after a statement, C style" "1  3" 'fun <> = main() { int a : 1
+? a
+int b : 2
+? a + b }'
+t "an array may be declared in a block" "4" 'uses len
+fun <> = main() { int n : 4
+if n > 0 {
+real v[n]
+? len(v) } }'
+# Read outside the block that declared it and it is not there - the same answer a name
+# made by assignment in that block has always given.
+t "read after the block is refused" "Undefined variable 't'" 'fun <> = main() { int x : 5
+if x > 0 {
+int t : 3 }
+? t }'
+# One name, one variable, for the whole call. The first block's scope is long gone by
+# the time the second is read, so this is remembered separately from the scope stack.
+t "sibling blocks may not both declare it" "Variable 't' already defined" 'fun <> = main() { int x : 5
+if x > 0 {
+int t : 1 }
+if x > 1 {
+int t : 2 }
+? x }'
+t "an inner declaration may not shadow an outer" "Variable 't' already defined" 'fun <> = main() { int t : 1
+if t > 0 {
+int t : 2 }
+? t }'
+t "a parameter still cannot be redeclared" "Variable 'a' already defined" 'fun <> = f(a: int) {
+if a > 0 {
+int a : 2 }
+return }
+fun <> = main() { f(1) }'
+# The global warning reaches a nested declaration too, since it is the same check.
+t "a nested declaration still warns on a global" "hides a global" 'int g : 1
+fun <> = main() {
+if g > 0 {
+int g : 2
+? g } }'
+
 # ------------------------------------------------------------ statements / control
 t "hello world" "Hello world!" 'fun <>=main() {
    ? "Hello world!"
